@@ -7,7 +7,6 @@ import {
 import type {
   ChatAction,
   ChatContractWarning,
-  ChatEndpointMessage,
   ChatEndpointResponse,
   ChatResponseTagNames,
   TargetRef
@@ -17,16 +16,6 @@ export type NormalizedActionResult = {
   actions: ChatAction[];
   warnings: ChatContractWarning[];
 };
-
-export type ResolvedTarget = {
-  messageHandle: string;
-  partIndex?: number;
-  message: ChatEndpointMessage;
-};
-
-export type TargetResolution =
-  | { ok: true; target: ResolvedTarget }
-  | { ok: false; reason: 'missing-target' | 'not-found' | 'ambiguous' | 'invalid-alias' };
 
 const DEFAULT_TAGS: ChatResponseTagNames = {
   message: 'message',
@@ -213,44 +202,6 @@ export function parseTaggedActions(
 
   if (matched) appendPlainTextAction(text.slice(cursor), actions);
   return matched ? actions : null;
-}
-
-export function resolveTargetRef(
-  target: TargetRef,
-  messages: ChatEndpointMessage[]
-): TargetResolution {
-  if ('messageHandle' in target) {
-    const message = messages.find(item => item.messageHandle === target.messageHandle);
-    return message
-      ? { ok: true, target: { messageHandle: target.messageHandle, partIndex: target.partIndex, message } }
-      : { ok: false, reason: 'not-found' };
-  }
-
-  if ('alias' in target) {
-    const index =
-      target.alias === 'first'
-        ? 0
-        : target.alias === 'previous'
-          ? messages.length - 2
-          : target.alias === 'latest' || target.alias === 'last'
-            ? messages.length - 1
-            : -1;
-    const message = messages[index];
-    return message
-      ? { ok: true, target: { messageHandle: message.messageHandle, partIndex: target.partIndex, message } }
-      : { ok: false, reason: target.alias === 'previous' ? 'not-found' : 'invalid-alias' };
-  }
-
-  let contentIncludes: string | undefined;
-  if ('contentIncludes' in target) contentIncludes = target.contentIncludes;
-  else if ('content' in target) contentIncludes = target.content;
-  if (!contentIncludes) return { ok: false, reason: 'missing-target' };
-  const matches = messages.filter(message => message.content.includes(contentIncludes));
-  if (matches.length === 0) return { ok: false, reason: 'not-found' };
-  const occurrence = 'occurrence' in target ? target.occurrence : undefined;
-  if (matches.length > 1 && !occurrence) return { ok: false, reason: 'ambiguous' };
-  const message = occurrence === 'first' ? matches[0] : matches[matches.length - 1];
-  return { ok: true, target: { messageHandle: message.messageHandle, partIndex: target.partIndex, message } };
 }
 
 function actionsFromMessageText(

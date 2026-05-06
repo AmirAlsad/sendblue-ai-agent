@@ -24,6 +24,7 @@ export type AgentConfig = {
   bufferQueueName: string;
   outboundDeliveryTimeoutMs: number;
   userLookupUrl?: string;
+  identityResolverTimeoutMs: number;
   outboundTypingIndicatorsEnabled: boolean;
   inboundTypingStateEnabled: boolean;
   readReceiptsEnabled: boolean;
@@ -32,6 +33,15 @@ export type AgentConfig = {
   typingRefreshMaxMs: number;
   agentDisplayName: string;
   validUserRequired: boolean;
+  /**
+   * When true (default), an inbound group message that contains a previously
+   * delivered agent message as a substring counts as addressing the agent.
+   * When false, only `@AGENT_DISPLAY_NAME` mentions and explicit reply
+   * metadata referencing an agent outbound count. The default preserves
+   * legacy behavior; set to false to avoid false-positive invocation on
+   * short replies (e.g. agent sent "yes" → user later writes "yes please").
+   */
+  groupInvocationContentFallback: boolean;
   chatResponseParseTags: boolean;
   chatResponseTags: ChatResponseTagNames;
 };
@@ -42,6 +52,19 @@ function requireEnv(env: ConfigEnv, name: string): string {
   const value = env[name];
   if (!value || value.trim() === '') {
     throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+// E.164 — leading `+`, then 10–15 digits. Catches the silent ++<digits> typo
+// that survives `requireEnv` and only surfaces when Sendblue rejects the call.
+const E164 = /^\+\d{10,15}$/;
+function requireE164Env(env: ConfigEnv, name: string): string {
+  const value = requireEnv(env, name).trim();
+  if (!E164.test(value)) {
+    throw new Error(
+      `Invalid E.164 phone number for ${name}: ${value}. Expected leading "+" followed by 10-15 digits (e.g. +15551234567).`
+    );
   }
   return value;
 }
@@ -93,7 +116,7 @@ export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
     sendblueApiSecretKey: requireEnv(env, 'SENDBLUE_API_SECRET_KEY'),
     sendblueApiBaseUrl: (env.SENDBLUE_API_BASE_URL || 'https://api.sendblue.co').replace(/\/+$/, ''),
     sendblueApiV2BaseUrl: (env.SENDBLUE_API_V2_BASE_URL || 'https://api.sendblue.com').replace(/\/+$/, ''),
-    sendblueFromNumber: requireEnv(env, 'SENDBLUE_FROM_NUMBER'),
+    sendblueFromNumber: requireE164Env(env, 'SENDBLUE_FROM_NUMBER'),
     sendblueWebhookSecret: env.SENDBLUE_WEBHOOK_SECRET || undefined,
     sendblueWebhookSecretHeader:
       env.SENDBLUE_WEBHOOK_SECRET_HEADER || 'sb-signing-secret',
@@ -110,6 +133,7 @@ export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
     bufferQueueName: env.BUFFER_QUEUE_NAME || 'sendblue-buffer-timers',
     outboundDeliveryTimeoutMs: optionalInt(env, 'OUTBOUND_DELIVERY_TIMEOUT_MS', 30000),
     userLookupUrl: env.USER_LOOKUP_URL || undefined,
+    identityResolverTimeoutMs: optionalInt(env, 'IDENTITY_RESOLVER_TIMEOUT_MS', 5000),
     outboundTypingIndicatorsEnabled: optionalBoolean(env, 'OUTBOUND_TYPING_INDICATORS_ENABLED', true),
     inboundTypingStateEnabled: optionalBoolean(env, 'INBOUND_TYPING_STATE_ENABLED', true),
     readReceiptsEnabled: optionalBoolean(env, 'READ_RECEIPTS_ENABLED', false),
@@ -118,6 +142,7 @@ export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
     typingRefreshMaxMs: optionalInt(env, 'TYPING_REFRESH_MAX_MS', 120000),
     agentDisplayName: optionalString(env, 'AGENT_DISPLAY_NAME') ?? 'sb-agent',
     validUserRequired: optionalBoolean(env, 'VALID_USER_REQUIRED', false),
+    groupInvocationContentFallback: optionalBoolean(env, 'GROUP_INVOCATION_CONTENT_FALLBACK', true),
     chatResponseParseTags: optionalBoolean(env, 'CHAT_RESPONSE_PARSE_TAGS', true),
     chatResponseTags: {
       message: optionalTagName(env, 'CHAT_RESPONSE_MESSAGE_TAG', DEFAULT_CHAT_RESPONSE_TAGS.message),

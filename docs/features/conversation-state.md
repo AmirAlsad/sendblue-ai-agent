@@ -27,8 +27,24 @@ Channel state is updated from receive and status webhook metadata. `service:
 "SMS"` or `was_downgraded: true` marks the conversation as SMS/downgraded.
 `service: "iMessage"` clears `smsDowngraded`, allowing iMessage-only behavior
 such as outbound typing indicators again. RCS is tracked as its own conversation
-channel, but the legacy top-level chat `channel` field maps RCS to `unknown` for
-backward compatibility.
+channel and is forwarded to the chat endpoint as `rcs` on both the top-level
+`channel` field and `conversation.channel`.
+
+Per-feature channel gating at outbound time (per
+https://docs.sendblue.com/api-v2/):
+
+- **iMessage-only**: outbound typing indicators, typing refreshes, send effects
+  (`sendStyle`), and Tapback reactions. Sent only when the direct conversation
+  is currently iMessage and not downgraded.
+- **iMessage and RCS**: read receipts (`POST /api/mark-read`). Sent for both
+  iMessage and RCS direct conversations; suppressed for SMS and downgraded
+  conversations.
+- Send effects are silently dropped on SMS/downgraded/RCS conversations; the
+  text or media still sends.
+- Reactions are skipped (with `skipReason`) on SMS/downgraded/RCS conversations.
+- Read receipts are also account-gated by Sendblue — even when the channel
+  qualifies, the `mark-read` call requires Sendblue support to enable the
+  feature on the account.
 
 The chat request remains backward compatible:
 

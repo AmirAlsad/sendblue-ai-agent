@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HttpSendblueClient } from '../../src/sendblue/client.js';
+import { HttpSendblueClient, SendblueApiError } from '../../src/sendblue/client.js';
 import { testConfig } from '../helpers/config.js';
 
 describe('HttpSendblueClient', () => {
@@ -69,6 +69,53 @@ describe('HttpSendblueClient', () => {
         })
       })
     );
+  });
+
+  it('forwards optional seat_id on send-message for multi-seat attribution', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ message_handle: 'outbound-seat-001' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await client.sendMessage({
+      toNumber: '+15551110001',
+      content: 'hi',
+      statusCallback: 'https://agent.example.test/webhook/status',
+      seatId: 'seat-uuid-abc-123'
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.sendblue.example.test/api/send-message',
+      expect.objectContaining({
+        body: JSON.stringify({
+          number: '+15551110001',
+          from_number: '+15552220000',
+          content: 'hi',
+          status_callback: 'https://agent.example.test/webhook/status',
+          seat_id: 'seat-uuid-abc-123'
+        })
+      })
+    );
+  });
+
+  it('omits seat_id from send-message when not provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ message_handle: 'outbound-noseat-001' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await client.sendMessage({
+      toNumber: '+15551110001',
+      content: 'hi',
+      statusCallback: 'https://agent.example.test/webhook/status'
+    });
+
+    const sendBody = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body) as Record<string, unknown>;
+    expect(sendBody).not.toHaveProperty('seat_id');
   });
 
   it('rejects sends without status_callback', async () => {
@@ -224,5 +271,166 @@ describe('HttpSendblueClient', () => {
     await expect(
       client.sendReaction({ messageHandle: 'inbound-001', reaction: 'love' })
     ).rejects.toThrow(/Sendblue send-reaction failed with 400 \(INVALID_REACTION: Invalid reaction\)/);
+  });
+
+  it('throws a structured SendblueApiError exposing httpStatus, errorCode, and the raw body', async () => {
+    const responseBody = {
+      status: 'ERROR',
+      error_code: '5509',
+      error_message: 'Rate limit window exceeded'
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => responseBody
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    let thrown: unknown;
+    try {
+      await client.sendMessage({
+        toNumber: '+15551110001',
+        content: 'hello',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(SendblueApiError);
+    expect(thrown).toBeInstanceOf(Error);
+    const apiError = thrown as SendblueApiError;
+    expect(apiError.operation).toBe('send-message');
+    expect(apiError.httpStatus).toBe(429);
+    expect(apiError.errorCode).toBe('5509');
+    expect(apiError.serverMessage).toBe('Rate limit window exceeded');
+    expect(apiError.responseBody).toEqual(responseBody);
+  });
+
+  it('still throws SendblueApiError when the error response has no parseable body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new Error('not json');
+      }
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    let thrown: unknown;
+    try {
+      await client.markRead({ toNumber: '+15551110001' });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(SendblueApiError);
+    const apiError = thrown as SendblueApiError;
+    expect(apiError.operation).toBe('mark-read');
+    expect(apiError.httpStatus).toBe(502);
+    expect(apiError.errorCode).toBeUndefined();
+    expect(apiError.responseBody).toBeNull();
+    expect(apiError.message).toMatch(/Sendblue mark-read failed with 502/);
+  });
+
+  it('omits status_callback on group sends when it is not provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ message_handle: 'group-no-cb' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await client.sendGroupMessage({ groupId: 'group-123', content: 'hi' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api-v2.sendblue.example.test/api/send-group-message',
+      expect.objectContaining({
+        body: JSON.stringify({
+          group_id: 'group-123',
+          from_number: '+15552220000',
+          content: 'hi'
+        })
+      })
+    );
+  });
+
+  it('routes send-message through the v1 base URL and rich endpoints through the v2 base URL', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ message_handle: 'v1-001' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ message_handle: 'v2-grp' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'OK', message_handle: 'rx' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'OK' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'QUEUED' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await client.sendMessage({
+      toNumber: '+15551110001',
+      content: 'hi',
+      statusCallback: 'https://agent.example.test/webhook/status'
+    });
+    await client.sendGroupMessage({ groupId: 'g', content: 'hi' });
+    await client.sendReaction({ messageHandle: 'rx', reaction: 'love' });
+    await client.markRead({ toNumber: '+15551110001' });
+    await client.sendTypingIndicator({ toNumber: '+15551110001' });
+
+    const urls = fetchMock.mock.calls.map(([url]) => url);
+    expect(urls[0]).toBe('https://api.sendblue.example.test/api/send-message');
+    expect(urls[1]).toBe('https://api-v2.sendblue.example.test/api/send-group-message');
+    expect(urls[2]).toBe('https://api-v2.sendblue.example.test/api/send-reaction');
+    expect(urls[3]).toBe('https://api-v2.sendblue.example.test/api/mark-read');
+    expect(urls[4]).toBe('https://api-v2.sendblue.example.test/api/send-typing-indicator');
+  });
+
+  it('does not coerce empty optional fields into request bodies', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ message_handle: 'm-1' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'OK' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await client.sendMessage({
+      toNumber: '+15551110001',
+      content: 'hi',
+      statusCallback: 'https://agent.example.test/webhook/status',
+      mediaUrl: undefined,
+      sendStyle: undefined
+    });
+    await client.sendReaction({ messageHandle: 'rx', reaction: 'love', partIndex: undefined });
+
+    const sendBody = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    const reactionBody = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
+    expect(sendBody).not.toHaveProperty('media_url');
+    expect(sendBody).not.toHaveProperty('send_style');
+    expect(reactionBody).not.toHaveProperty('part_index');
+  });
+
+  it('passes part_index = 0 through to send-reaction', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'OK', message_handle: 'rx', reaction: 'love' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await client.sendReaction({ messageHandle: 'rx', reaction: 'love', partIndex: 0 });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body.part_index).toBe(0);
+  });
+
+  it('propagates fetch failures (network/DNS errors) without wrapping', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await expect(
+      client.sendTypingIndicator({ toNumber: '+15551110001' })
+    ).rejects.toThrow(/fetch failed/);
   });
 });

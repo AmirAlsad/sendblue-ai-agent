@@ -53,7 +53,27 @@ optional opaque `data` field:
 
 Resolver failures fail open. The agent logs the failure, continues processing,
 and sends the chat request with `identity: null`. Successful identity values are
-stored on the conversation record and reused for that conversation.
+stored on the conversation record and reused for that conversation. Fail-open
+semantics are enforced in `ConversationAgent.resolveIdentity` (it catches and
+logs any rejection from the resolver); `HttpIdentityResolver` therefore throws
+on transport errors, request timeouts, non-2xx responses, and invalid JSON so
+those failures show up in logs instead of being silently coerced to "no
+identity".
+
+`HttpIdentityResolver` enforces a request timeout via `AbortSignal.timeout`,
+defaulting to `IDENTITY_RESOLVER_TIMEOUT_MS` (5000 ms). Setting the timeout to
+`0` disables the timeout. Identity lookup runs inline before the chat call, so
+a hung upstream lookup would otherwise stall buffering and outbound delivery.
+
+If the body is `null`, an array, a primitive, or an object whose `userId` is
+missing/blank, the resolver returns `null` (not a rejection): a malformed
+"no match" payload is treated the same as "no identity for this number".
+
+Sendblue exposes a Contacts API (`GET /api/v2/contacts/:phone_number`) for
+operator-managed contact metadata, but the package intentionally does not fall
+back to it: that data is operator/CRM contact info, not application user
+identity. Resolution remains the developer's responsibility through
+`USER_LOOKUP_URL` or a custom `identityResolver` injected into `createApp`.
 
 The package does not interpret `identity.data`; it is passed through to the chat
 endpoint so the application can apply its own account, profile, or CRM context.
@@ -71,13 +91,18 @@ endpoint so the application can apply its own account, profile, or CRM context.
 ## Configuration
 
 - `USER_LOOKUP_URL` - enables HTTP identity lookup.
+- `IDENTITY_RESOLVER_TIMEOUT_MS` - per-request timeout for the lookup, default
+  `5000`. Set to `0` to disable.
+- `VALID_USER_REQUIRED` - when `true`, a null or `authorized: false` identity
+  causes the agent to silently acknowledge the inbound message without calling
+  the chat endpoint.
 - `CHAT_ENDPOINT_URL` - receives the enriched chat request.
 - `REDIS_URL` - stores resolved identity durably when configured.
 
 ## Known limitations
 
-- There is no separate timeout setting for `USER_LOOKUP_URL`; the HTTP resolver
-  currently relies on default `fetch` behavior.
 - Identity is cached on the conversation record until the conversation TTL
   expires or the record is overwritten; there is no explicit refresh policy yet.
 - The resolver only supports phone-based lookup in v0.2.
+- Sendblue's Contacts v2 API (`GET /api/v2/contacts/:phone_number`) is not used
+  as a fallback; identity is intentionally a developer-supplied concern.

@@ -38,15 +38,34 @@ Required for the agent:
 
 - `PUBLIC_BASE_URL` - public URL for Sendblue status callbacks; used to build `/webhook/status`.
 - `CHAT_ENDPOINT_URL` - HTTP endpoint that generates replies.
-- `SENDBLUE_API_KEY_ID` - Sendblue API key ID.
-- `SENDBLUE_API_SECRET_KEY` - Sendblue API secret key.
-- `SENDBLUE_FROM_NUMBER` - dedicated Sendblue line used for outbound messages and direct conversation keys.
+- `SENDBLUE_API_KEY_ID` - Sendblue API key ID. Sent on every Sendblue API
+  request as the `sb-api-key-id` header. The official Sendblue TypeScript SDK
+  documents `SENDBLUE_API_API_KEY` for the same value; this package keeps
+  `SENDBLUE_API_KEY_ID` because it mirrors the documented HTTP header name and
+  predates the SDK convention.
+- `SENDBLUE_API_SECRET_KEY` - Sendblue API secret. Sent as `sb-api-secret-key`.
+  The Sendblue SDK documents `SENDBLUE_API_API_SECRET` for the same value.
+- `SENDBLUE_FROM_NUMBER` - dedicated Sendblue line used for outbound messages
+  and direct conversation keys. Validated as E.164 at `loadConfig` startup
+  (leading `+` then 10–15 digits). Invalid values like `++15551234567` (a
+  common copy-paste typo) throw immediately with a clear error rather than
+  silently 400ing the first Sendblue API call with `"You must specify a valid
+  from_number"`.
 
 Optional server and API values:
 
 - `PORT` - Express port, default `3000`.
-- `SENDBLUE_API_BASE_URL` - Sendblue API origin, default `https://api.sendblue.co`.
+- `SENDBLUE_API_BASE_URL` - Sendblue v1 API origin, default `https://api.sendblue.co`.
+- `SENDBLUE_API_V2_BASE_URL` - Sendblue v2 API origin (used for v2 endpoints
+  such as `mark-read`), default `https://api.sendblue.com`.
 - `CHAT_ENDPOINT_TIMEOUT_MS` - chat endpoint timeout, default `10000`.
+
+Optional process control (consumed in `src/index.ts`, not by `loadConfig`):
+
+- `AGENT_AUTOSTART` - when `0`, the app does not auto-start on import; useful
+  for embedding `createApp` in a custom entry point.
+- `NODE_ENV` - when `test`, autostart is also skipped so test imports do not
+  bind a port.
 
 Optional webhook security:
 
@@ -76,6 +95,9 @@ Optional ordered delivery:
 Optional identity and typing:
 
 - `USER_LOOKUP_URL` - HTTP resolver used to enrich chat requests with `{ userId, data }`.
+- `IDENTITY_RESOLVER_TIMEOUT_MS` - per-request timeout for `USER_LOOKUP_URL`,
+  default `5000`. Set to `0` to disable. The agent fails open with
+  `identity: null` on any resolver error.
 - `OUTBOUND_TYPING_INDICATORS_ENABLED` - sends best-effort Sendblue typing indicators for direct iMessage conversations, default `true`.
 - `INBOUND_TYPING_STATE_ENABLED` - stores inbound typing webhooks for inclusion
   in the next chat request, default `true`. This only has live effect when the

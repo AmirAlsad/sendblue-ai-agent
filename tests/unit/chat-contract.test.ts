@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeChatResponse, parseTaggedText } from '../../src/chat/client.js';
+import { SENDBLUE_REACTIONS, SENDBLUE_SEND_STYLES } from '../../src/sendblue/types.js';
 
 describe('hybrid chat response contract', () => {
   it('parses default response tags into ordered actions', () => {
@@ -115,5 +116,160 @@ describe('hybrid chat response contract', () => {
       { type: 'reaction', reaction: 'question', target: { alias: 'last' } },
       { type: 'message', content: 'after' }
     ]);
+  });
+
+  it('passes through every documented Sendblue send_style on message actions', () => {
+    for (const sendStyle of SENDBLUE_SEND_STYLES) {
+      expect(
+        normalizeChatResponse({ actions: [{ type: 'message', content: 'hi', sendStyle }] })
+      ).toEqual({ actions: [{ type: 'message', content: 'hi', sendStyle }] });
+    }
+  });
+
+  it('drops unknown send_style values without dropping the action', () => {
+    const response = normalizeChatResponse({
+      actions: [{ type: 'message', content: 'hi', sendStyle: 'tornado' }]
+    });
+    expect(response.actions).toEqual([{ type: 'message', content: 'hi' }]);
+  });
+
+  it('accepts every documented Sendblue reaction value', () => {
+    for (const reaction of SENDBLUE_REACTIONS) {
+      const response = normalizeChatResponse({
+        actions: [{ type: 'reaction', reaction, target: { messageHandle: 'recv-1' } }]
+      });
+      expect(response.actions).toEqual([
+        { type: 'reaction', reaction, target: { messageHandle: 'recv-1' } }
+      ]);
+    }
+  });
+
+  it('aliases legacy reaction names (heart, haha) onto canonical Sendblue values', () => {
+    const heart = normalizeChatResponse({
+      actions: [{ type: 'reaction', reaction: 'heart', target: { messageHandle: 'recv-1' } }]
+    });
+    expect(heart.actions).toEqual([
+      { type: 'reaction', reaction: 'love', target: { messageHandle: 'recv-1' } }
+    ]);
+
+    const haha = normalizeChatResponse({
+      actions: [{ type: 'reaction', reaction: 'haha', target: { messageHandle: 'recv-1' } }]
+    });
+    expect(haha.actions).toEqual([
+      { type: 'reaction', reaction: 'laugh', target: { messageHandle: 'recv-1' } }
+    ]);
+  });
+
+  it('round-trips media actions with optional caption and sendStyle', () => {
+    expect(
+      normalizeChatResponse({
+        actions: [
+          {
+            type: 'media',
+            mediaUrl: 'https://cdn.example.com/photo.png',
+            content: 'caption',
+            sendStyle: 'celebration'
+          }
+        ]
+      })
+    ).toEqual({
+      actions: [
+        {
+          type: 'media',
+          mediaUrl: 'https://cdn.example.com/photo.png',
+          content: 'caption',
+          sendStyle: 'celebration'
+        }
+      ]
+    });
+  });
+
+  it('rejects media actions without a mediaUrl', () => {
+    const response = normalizeChatResponse({ actions: [{ type: 'media', content: 'no url' }] });
+    expect(response.actions).toEqual([]);
+    expect(response.warnings?.[0].code).toBe('invalid-media-action');
+  });
+
+  it('preserves snake_case media_url and send_style inputs', () => {
+    expect(
+      normalizeChatResponse({
+        actions: [
+          {
+            type: 'message',
+            content: 'hi',
+            media_url: 'https://cdn.example.com/photo.png',
+            send_style: 'balloons'
+          }
+        ]
+      })
+    ).toEqual({
+      actions: [
+        {
+          type: 'message',
+          content: 'hi',
+          mediaUrl: 'https://cdn.example.com/photo.png',
+          sendStyle: 'balloons'
+        }
+      ]
+    });
+  });
+
+  it('treats an empty actions[] array as a recognized non-silent no-op', () => {
+    expect(normalizeChatResponse({ actions: [] })).toEqual({ actions: [] });
+  });
+
+  it('drops the entire response when an action-level silence is mixed with outbound actions', () => {
+    const response = normalizeChatResponse({
+      actions: [
+        { type: 'message', content: 'send' },
+        { type: 'silence' }
+      ]
+    });
+    expect(response.actions).toEqual([]);
+    expect(response.warnings?.[0].code).toBe('mixed-silence-actions');
+  });
+
+  it('treats a sole silence action as silence without outbound', () => {
+    expect(normalizeChatResponse({ actions: [{ type: 'silence' }] })).toEqual({
+      actions: [],
+      silence: true
+    });
+  });
+
+  it('parses tagged media on message actions and exposes the underlying mediaUrl', () => {
+    expect(
+      normalizeChatResponse({
+        message:
+          '<message media_url="https://cdn.example.com/a.png">caption</message>'
+      })
+    ).toEqual({
+      actions: [
+        { type: 'message', content: 'caption', mediaUrl: 'https://cdn.example.com/a.png' }
+      ]
+    });
+  });
+
+  it('preserves nested message tag inside reply tag for content and mediaUrl', () => {
+    expect(
+      normalizeChatResponse({
+        message:
+          '<reply target="last"><message media_url="https://cdn.example.com/a.png">replying</message></reply>'
+      })
+    ).toEqual({
+      actions: [
+        {
+          type: 'reply',
+          content: 'replying',
+          mediaUrl: 'https://cdn.example.com/a.png',
+          target: { alias: 'last' }
+        }
+      ]
+    });
+  });
+
+  it('throws when payload is not an object (string, array, null)', () => {
+    expect(() => normalizeChatResponse('hi')).toThrow(/must be an object/);
+    expect(() => normalizeChatResponse([])).toThrow(/must be an object/);
+    expect(() => normalizeChatResponse(null)).toThrow(/must be an object/);
   });
 });

@@ -23,14 +23,23 @@ memory.
 
 Sendblue status callbacks are channel-aware:
 
-- iMessage and RCS conversations advance on `DELIVERED`.
-- SMS and downgraded conversations advance on `SENT`.
+- iMessage conversations advance on `DELIVERED` (the documented terminal state
+  for iMessage).
+- SMS and downgraded conversations advance on `SENT` (`SENT` is the terminal
+  state for SMS; `DELIVERED` is not reliably emitted).
+- RCS conversations advance on `DELIVERED` by default. RCS is treated like
+  iMessage for ordering purposes, but Sendblue's public docs do not currently
+  cover RCS terminal-state semantics, so this is verified against live captures
+  rather than the docs. Adjust if a captured RCS callback shows otherwise.
 - `ERROR` and `DECLINED` abort the queue in v0.2.
 - Other statuses are tracked but do not advance delivery.
 
 This split matters because SMS may not produce `DELIVERED` in the same way as
 iMessage/RCS, while iMessage ordering should wait for delivery confirmation
-when available.
+when available. See
+[Sendblue webhooks docs](https://docs.sendblue.com/getting-started/webhooks/)
+and [Sendblue send-message docs](https://docs.sendblue.com/getting-started/sending-messages/)
+for the underlying status semantics.
 
 Each current outbound handle also gets a local delivery timeout. If the expected
 status callback does not arrive before `OUTBOUND_DELIVERY_TIMEOUT_MS`, the agent
@@ -70,3 +79,9 @@ queued replies are cancelled and the inbound starts a new buffer.
 - Delivery timeout state is process-local; Redis stores mappings, but active
   JavaScript timers do not survive restarts.
 - `READ` is intentionally not used as a delivery gate.
+- **RCS terminal-status assumption is unverified.** Sendblue's public docs
+  document iMessage→`DELIVERED` and SMS→`SENT` but do not specify RCS
+  semantics. This package assumes RCS terminates at `DELIVERED` (matching
+  iMessage). If a captured live RCS callback ever terminates at `SENT`, RCS
+  queues will stall on the local delivery timeout instead of advancing
+  cleanly. Pin against a captured RCS callback before v1.0.

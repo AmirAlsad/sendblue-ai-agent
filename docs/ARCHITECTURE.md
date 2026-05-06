@@ -64,8 +64,11 @@ coordinate more than one process.
   one mutable state record across iMessage, RCS, SMS, and downgrade changes.
 - Rapid inbound bursts are aggregated into a backward-compatible top-level
   `message` string plus structured `messages[]`.
-- Ordered delivery waits for `DELIVERED` on iMessage/RCS and `SENT` on SMS or
-  downgraded conversations.
+- Ordered delivery waits for `DELIVERED` on iMessage and `SENT` on SMS or
+  downgraded conversations. RCS is treated like iMessage and advances on
+  `DELIVERED` by default, but Sendblue's public docs do not document RCS
+  terminal-state semantics — pin against a captured live RCS callback before
+  v1.0 (see `docs/features/ordered-delivery.md`).
 - Sendblue `status_callback` is supplied on every outbound `send-message`
   request; there is no assumed global callback.
 - Typing indicators are best effort and only emitted for direct iMessage
@@ -79,19 +82,29 @@ coordinate more than one process.
 
 - [Configuration and tunables](features/configuration.md)
 - [Inbound webhooks](features/inbound-webhooks.md)
+- [Outbound Sendblue client](features/outbound-client.md)
+- [Webhook security](features/webhook-security.md)
 - [Message buffering and interruptions](features/message-buffering.md)
 - [Ordered delivery](features/ordered-delivery.md)
+- [Status tracking](features/status-tracking.md)
 - [Typing indicators](features/typing-indicators.md)
 - [Identity resolver](features/identity-resolver.md)
 - [Conversation state and chat contract](features/conversation-state.md)
+- [Rich chat actions](features/rich-chat-actions.md)
 - [Testing infrastructure](TESTING.md)
 - [Observed Sendblue payload structures](SENDBLUE-PAYLOAD-STRUCTURES.md)
 
 ## Known limitations
 
-- Group routing, media send behavior, reactions, send effects, retries/backoff,
-  and richer operational diagnostics remain roadmap work.
+- Retries/backoff for transient Sendblue error codes (`5509`, `5003`,
+  `SMS_LIMIT_REACHED`) and richer operational diagnostics remain roadmap
+  work for v0.4. `SendblueApiError.errorCode` and
+  `classifyErrorCode`/`isTransientErrorCode` (`src/status/tracker.ts`) make
+  this implementable; the policy decision (client-level vs. agent-level
+  retry) is open.
 - Delivery timeout timers are process-local even when Redis stores queue
   mappings.
+- RCS terminal-status is assumed to be `DELIVERED` (matching iMessage); not
+  yet verified against a captured live RCS callback.
 - The real Sendblue/iMessage path still requires macOS Messages.app, a dedicated
   Sendblue line, public tunnel, and captured webhook validation.

@@ -44,6 +44,36 @@ export type ObservedWebhookEnvelope = {
 
 type RawBodyRequest = Request & { rawBody?: string };
 
+/**
+ * Composes the Express webhook ingress for the Sendblue agent.
+ *
+ * Routes mounted:
+ * - `GET /health` — liveness probe.
+ * - `POST /webhook/receive` — inbound message webhook. Dedupes on
+ *   `message_handle` and hands off to {@link ConversationAgent.handleReceive}.
+ *   Returns 202 on accepted, 200 on dedupe-drop, 400 on parse failure, 401 on
+ *   invalid secret, 502 on downstream chat failure.
+ * - `POST /webhook/status` — outbound status callback. Returns 200 on success
+ *   so Sendblue does not retry, 400 on parse failure, 401 on invalid secret.
+ * - `POST /webhook/typing-indicator` — inbound typing webhook (account-gated
+ *   even though the type is documented). Returns 202 on success, 400 on parse
+ *   failure, 401 on invalid secret.
+ * - `POST /webhook/{call-log,line-blocked,line-assigned,contact-created}` —
+ *   operational webhooks parsed generically for forward compatibility.
+ *
+ * Status code policy is aligned with Sendblue's documented retry behavior:
+ * "Sendblue retries webhook delivery up to 3 times if your endpoint returns a
+ * 5xx server error" (https://docs.sendblue.com/getting-started/webhooks). All
+ * non-retryable conditions (auth failure, malformed payload, downstream chat
+ * failure) return 4xx so Sendblue does not retry; transport-side retry is
+ * handled by the conversation/outbound layer instead.
+ *
+ * Webhook secret validation is shared-secret only. Sendblue documents the
+ * header name as `sb-signing-secret` (https://docs.sendblue.com/security). The
+ * header name is configurable via `SENDBLUE_WEBHOOK_SECRET_HEADER` for
+ * compatibility with legacy installs; both the configured name and the
+ * documented literal are accepted.
+ */
 export function createApp(deps: AppDependencies) {
   const app = express();
   const statusStore = deps.statusStore ?? new InMemoryStatusStore();
@@ -88,6 +118,7 @@ export function createApp(deps: AppDependencies) {
   app.post('/webhook/receive', async (req: Request, res: Response) => {
     await observeWebhook(req, deps.webhookObserver, logger);
     if (!validateWebhookSecret(req, deps.config)) {
+      logSecretRejection(logger, req, 'receive');
       res.status(401).json({ error: 'invalid webhook secret' });
       return;
     }
@@ -96,6 +127,7 @@ export function createApp(deps: AppDependencies) {
     try {
       webhook = parseReceiveWebhook(req.body);
     } catch (error) {
+      logger.warn({ err: error, path: req.path }, 'failed to parse receive webhook');
       res.status(400).json({ error: error instanceof Error ? error.message : 'invalid payload' });
       return;
     }
@@ -119,6 +151,7 @@ export function createApp(deps: AppDependencies) {
   app.post('/webhook/status', async (req: Request, res: Response) => {
     await observeWebhook(req, deps.webhookObserver, logger);
     if (!validateWebhookSecret(req, deps.config)) {
+      logSecretRejection(logger, req, 'status');
       res.status(401).json({ error: 'invalid webhook secret' });
       return;
     }
@@ -136,6 +169,7 @@ export function createApp(deps: AppDependencies) {
   app.post('/webhook/typing-indicator', async (req: Request, res: Response) => {
     await observeWebhook(req, deps.webhookObserver, logger);
     if (!validateWebhookSecret(req, deps.config)) {
+      logSecretRejection(logger, req, 'typing_indicator');
       res.status(401).json({ error: 'invalid webhook secret' });
       return;
     }
@@ -145,6 +179,7 @@ export function createApp(deps: AppDependencies) {
       const result = await conversationAgent.handleTyping(webhook);
       res.status(202).json(result);
     } catch (error) {
+      logger.warn({ err: error, path: req.path }, 'failed to process typing indicator webhook');
       res.status(400).json({ error: error instanceof Error ? error.message : 'invalid payload' });
     }
   });
@@ -155,24 +190,30 @@ export function createApp(deps: AppDependencies) {
     ).map(sendblueWebhookPath),
     async (req: Request, res: Response) => {
       await observeWebhook(req, deps.webhookObserver, logger);
+      const webhookType = sendblueOperationalWebhookTypeFromPath(req.path);
       if (!validateWebhookSecret(req, deps.config)) {
+        logSecretRejection(logger, req, webhookType ?? 'operational');
         res.status(401).json({ error: 'invalid webhook secret' });
         return;
       }
 
-      const webhookType = sendblueOperationalWebhookTypeFromPath(req.path);
       try {
         const webhook = parseOperationalWebhook(req.body);
         logger.info(
           {
             webhookType,
             messageHandle: webhook.messageHandle,
-            status: webhook.status
+            status: webhook.status,
+            path: req.path
           },
           'received Sendblue operational webhook'
         );
         res.status(202).json({ ok: true, type: webhookType });
       } catch (error) {
+        logger.warn(
+          { err: error, webhookType, path: req.path },
+          'failed to parse Sendblue operational webhook'
+        );
         res.status(400).json({ error: error instanceof Error ? error.message : 'invalid payload' });
       }
     }
@@ -185,6 +226,25 @@ export function createApp(deps: AppDependencies) {
     conversationStore,
     close: () => conversationAgent.close()
   };
+}
+
+function logSecretRejection(logger: pino.Logger, req: Request, route: string): void {
+  // We deliberately do not log the provided header value, only its presence and
+  // size. Sendblue's secret is a literal shared string, so leaking it via logs
+  // would be as bad as leaking the configured value.
+  const headerNames = ['sb-signing-secret', 'sb-signing-secret-header'];
+  const presentHeaders = Object.keys(req.headers).filter(name => /^sb[-_]/i.test(name));
+  logger.warn(
+    {
+      route,
+      path: req.path,
+      headerNames,
+      presentSendblueHeaders: presentHeaders,
+      remoteIp: req.ip,
+      userAgent: req.get('user-agent')
+    },
+    'rejected Sendblue webhook with invalid secret'
+  );
 }
 
 async function observeWebhook(

@@ -282,6 +282,65 @@ describe('agent app flow', () => {
     expect(chatClient.calls).toHaveLength(0);
   });
 
+  it('rejects receive requests with a missing webhook secret', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      body: loadFixture('sendblue/receive-basic.json')
+    });
+
+    expect(response.status).toBe(401);
+    expect(chatClient.calls).toHaveLength(0);
+  });
+
+  it('rejects status callbacks with an invalid webhook secret', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [config.sendblueWebhookSecretHeader]: 'wrong' },
+      body: loadFixture('sendblue/status-delivered.json')
+    });
+
+    expect(response.status).toBe(401);
+    expect(statusStore.get('outbound-001')).toBeUndefined();
+  });
+
+  it('rejects typing-indicator webhooks with an invalid webhook secret', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/typing-indicator',
+      headers: { [config.sendblueWebhookSecretHeader]: 'wrong' },
+      body: { from_number: '+15551110001', is_typing: true }
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it('rejects operational webhooks with an invalid webhook secret', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/call-log',
+      headers: { [config.sendblueWebhookSecretHeader]: 'wrong' },
+      body: { message_handle: 'op-1' }
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it('does not constant-time-leak prefix matches when validating the secret', async () => {
+    // The configured testConfig() secret starts with "test-" so a partial-prefix
+    // header should still be rejected. This guards against a regression away
+    // from constant-time comparison in src/http/security.ts.
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret!.slice(0, 4) },
+      body: loadFixture('sendblue/receive-basic.json')
+    });
+
+    expect(response.status).toBe(401);
+  });
+
   it('accepts Sendblue documented signing-secret header', async () => {
     const response = await dispatch(app, {
       method: 'POST',
@@ -390,6 +449,52 @@ describe('agent app flow', () => {
 
     expect(response.status).toBe(400);
     expect(chatClient.calls).toHaveLength(0);
+  });
+
+  it('rejects malformed status payloads with 400', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: { status: 'DELIVERED' }
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects malformed operational payloads with 400', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/call-log',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: 'not an object'
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('only registers documented Sendblue webhook paths', () => {
+    // Defense in depth: a future refactor that mounts the operational handler
+    // on a wildcard path could accidentally treat untrusted POSTs as
+    // Sendblue-signed traffic. Pin the registered route list so any change
+    // gets a code review.
+    const routes = app._router.stack
+      .filter((layer: { route?: { path?: string } }) => Boolean(layer.route?.path))
+      .map((layer: { route?: { path?: string | string[] } }) => layer.route!.path)
+      .flat();
+
+    expect(routes).toEqual(
+      expect.arrayContaining([
+        '/health',
+        '/webhook/receive',
+        '/webhook/status',
+        '/webhook/typing-indicator',
+        '/webhook/call-log',
+        '/webhook/line-blocked',
+        '/webhook/line-assigned',
+        '/webhook/contact-created'
+      ])
+    );
   });
 
   it('does not enforce webhook secret when no secret is configured', async () => {

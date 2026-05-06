@@ -56,6 +56,16 @@ export const SENDBLUE_ERROR_CODES = [
 
 export type SendblueErrorCode = (typeof SENDBLUE_ERROR_CODES)[number];
 
+/**
+ * Normalized inbound `receive` webhook payload.
+ *
+ * Required fields are kept narrow on purpose: only what the conversation
+ * router needs (`fromNumber`, `toNumber`, `messageHandle`, and a string
+ * `content`). Everything else Sendblue documents is surfaced as optional or
+ * nullable structured fields, and the full unmodified payload is preserved
+ * on `raw` for forward compatibility (reply/reaction metadata, future
+ * fields, account-specific extensions).
+ */
 export type SendblueReceiveWebhook = {
   content: string;
   fromNumber: string;
@@ -72,22 +82,74 @@ export type SendblueReceiveWebhook = {
   participants?: unknown;
   sendStyle?: string | null;
   messageType?: string | null;
+  /** Sendblue end-user phone number (E.164). Documented alongside `from_number`. */
+  number?: string | null;
+  /** Account email associated with the receiving Sendblue line. */
+  accountEmail?: string | null;
+  /** Sendblue plan value (e.g. `"dedicated"`). */
+  plan?: string | null;
+  /** Whether the contact has opted out of receiving messages. */
+  optedOut?: boolean | null;
+  /** ISO-8601 timestamp Sendblue received/sent the message. */
+  dateSent?: string | null;
+  /** ISO-8601 timestamp Sendblue last updated the message. */
+  dateUpdated?: string | null;
+  /** Email of the seat that originated the message (typically null on inbound). */
+  senderEmail?: string | null;
+  /** UUID of the seat that originated the message (typically null on inbound). */
+  seatId?: string | null;
+  /** Documented Sendblue error code for the status (string in payload). */
+  errorCode?: string;
+  errorMessage?: string;
+  errorDetail?: string;
+  /** Free-form error context — distinct from `errorMessage`/`errorDetail`. */
+  errorReason?: string;
   raw: Record<string, unknown>;
 };
 
+/**
+ * Normalized outbound message status callback payload.
+ *
+ * Status callbacks share the receive envelope shape, so most documented
+ * receive fields are also surfaced here for diagnostics. Only `messageHandle`
+ * and a documented `status` value are required; missing or invalid `status`
+ * (including `READ` and `RECEIVED`) results in a parse error.
+ */
 export type SendblueStatusWebhook = {
   messageHandle: string;
   status: SendblueStatus;
   errorCode?: string;
   errorMessage?: string;
   errorDetail?: string;
+  errorReason?: string;
   wasDowngraded?: boolean | null;
   service?: string;
+  fromNumber?: string;
+  toNumber?: string;
+  number?: string | null;
+  accountEmail?: string | null;
+  plan?: string | null;
+  dateSent?: string | null;
+  dateUpdated?: string | null;
+  groupId?: string | null;
+  senderEmail?: string | null;
+  seatId?: string | null;
   raw: Record<string, unknown>;
 };
 
+/**
+ * Permissive normalized shape for Sendblue operational webhooks
+ * (`call_log`, `line_blocked`, `line_assigned`, `contact_created`).
+ *
+ * Only `call_log` has a documented payload schema; the other operational
+ * webhooks are listed as supported types but Sendblue does not publish
+ * field-level documentation, so we deliberately keep this loose and
+ * preserve the full payload on `raw`.
+ */
 export type SendblueOperationalWebhook = {
   raw: Record<string, unknown>;
+  /** Present on `call_log` payloads (e.g. `"call_log"`). May be absent. */
+  eventType?: string;
   messageHandle?: string;
   fromNumber?: string;
   toNumber?: string;
@@ -102,6 +164,12 @@ export type SendblueOutboundMessage = {
   statusCallback: string;
   mediaUrl?: string;
   sendStyle?: SendblueSendStyle;
+  /**
+   * Optional Sendblue seat id (UUID or Firebase Auth subject).
+   * Documented at https://docs.sendblue.com/api/resources/messages/methods/send/.
+   * Required for multi-seat outbound attribution.
+   */
+  seatId?: string;
 };
 
 export type SendblueOutboundGroupMessage = {

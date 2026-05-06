@@ -25,6 +25,7 @@ export function testConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
     bufferQueueName: 'test-buffer-timers',
     outboundDeliveryTimeoutMs: 30000,
     userLookupUrl: undefined,
+    identityResolverTimeoutMs: 0,
     outboundTypingIndicatorsEnabled: true,
     inboundTypingStateEnabled: true,
     readReceiptsEnabled: false,
@@ -33,6 +34,7 @@ export function testConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
     typingRefreshMaxMs: 0,
     agentDisplayName: 'sb-agent',
     validUserRequired: false,
+    groupInvocationContentFallback: true,
     chatResponseParseTags: true,
     chatResponseTags: {
       message: 'message',

@@ -42,16 +42,21 @@ Important API assumptions:
 
 - The package assumes a dedicated Sendblue line. Shared numbers are not supported.
 - Sendblue has no inbound webhook simulator or sandbox-to-sandbox iMessage flow. Real-device E2E testing is load-bearing.
+- The Sendblue API is not always foolproof or uniformly enabled across accounts. When documented behavior fails in live testing, preserve local diagnostics and distinguish implementation bugs from account/API gating or vendor-side issues that need Sendblue support.
 - Webhook types documented by Sendblue include `receive`, `outbound`, `typing_indicator`, `call_log`, `line_blocked`, `line_assigned`, and `contact_created`. Treat `typing_indicator` as account/API-gated until live registration is verified; observed live webhook APIs may reject or drop it even though the docs list it.
 - Sendblue retries webhooks up to 3 times on 5xx responses with a 45-second timeout. Deduplicate on `message_handle`.
-- Status callbacks use `REGISTERED`, `PENDING`, `DECLINED`, `QUEUED`, `ACCEPTED`, `SENT`, `DELIVERED`, and `ERROR`. Do not rely on `READ`.
+- Status callbacks use `REGISTERED`, `PENDING`, `DECLINED`, `QUEUED`, `ACCEPTED`, `SENT`, `DELIVERED`, and `ERROR`. Sendblue does NOT emit a `READ` status callback; do not depend on one. Read receipts are a best-effort `POST /api/mark-read` call gated by `READ_RECEIPTS_ENABLED`.
 - `status_callback` must be passed on each `send-message` request; there is no global default.
 - Ordered delivery is channel-aware: iMessage/RCS queues advance on `DELIVERED`; SMS and downgraded conversations advance on `SENT`.
-- The webhook secret header name is undocumented. Keep it configurable and confirm from a captured real webhook before enforcing in production.
+- The webhook secret header is `sb-signing-secret` per Sendblue's security docs (https://docs.sendblue.com/security): "Sendblue sends `sb-signing-secret` header with requests. Verify this matches your configured secret." It is a literal shared-secret string, not an HMAC signature over the body. Keep `SENDBLUE_WEBHOOK_SECRET_HEADER` configurable as a compatibility alias for legacy installs and confirm from a captured real webhook before enforcing in production. See `docs/features/webhook-security.md`.
 - Important error codes include `4000`, `4001`, `4002`, `5000`, `5003`, `5509`, `10001`, `10002`, and `SMS_LIMIT_REACHED`.
 - Sendblue outbound typing indicators are direct iMessage-only. Do not send typing indicators or typing refreshes for SMS, downgraded conversations, or unaddressed groups. Inbound typing state depends on successfully registering the documented `typing_indicator` webhook for the account/line.
-- iMessage-only rich actions such as send effects, reactions, replies, read receipts, and typing refreshes must be suppressed or safely degraded for SMS and downgraded conversations.
-- Group receives are silent unless addressed to `AGENT_DISPLAY_NAME`, a best-effort Tapback/reply references a known agent outbound, or future payloads include explicit reply metadata targeting the agent. Acknowledge, dedupe, preserve/log metadata, and only reply by `group_id` for addressed inbound-initiated groups.
+- Per-feature channel support matrix (per https://docs.sendblue.com/api-v2/):
+  - Send effects (`send_style`), Tapback reactions, replies, outbound typing indicators, typing refreshes — **iMessage-only.** Suppress or safely degrade for SMS, downgraded, and RCS conversations.
+  - Read receipts (`POST /api/mark-read`) — **iMessage and RCS** per https://docs.sendblue.com/api-v2/read-receipts/. Suppress for SMS and downgraded conversations.
+  - Group routing — silent unless addressed to `AGENT_DISPLAY_NAME`, a best-effort Tapback/reply references a known agent outbound, or future payloads include explicit reply metadata targeting the agent. Acknowledge, dedupe, preserve/log metadata, and only reply by `group_id` for addressed inbound-initiated groups.
+- `was_downgraded` is conversation-significant state but is *not* sticky for life: when a previously-downgraded conversation receives a fresh `service: "iMessage"` payload, `smsDowngraded` clears so iMessage-only features re-engage. The alternative — sticky-for-life downgrade — would suppress iMessage features forever for users who briefly fall off iMessage and return.
+- Sendblue's Contacts v2 API (`GET /api/v2/contacts/:phone_number`) is operator-managed contact metadata, not application user identity. Do not use it as a fallback for the identity resolver — application user identity remains a developer concern via `USER_LOOKUP_URL` or an injected `identityResolver`.
 
 ## Testing Strategy
 
@@ -101,7 +106,9 @@ npm run test:e2e
 - Preserve the chat endpoint's top-level `message` string for backward compatibility. Add richer context through structured `messages[]`, `conversation`, `identity`, and `typing` objects rather than replacing the old contract.
 - Preserve the chat endpoint's legacy `message`, `messages`, and `silence` response forms. Prefer the rich `actions[]` response contract for new media, effect, reaction, contextual reply, silence, and group-addressed behavior. Read receipts and typing refresh are agent-side behaviors around processing and ordered delivery.
 - XML tag compatibility is only a bridge for model outputs that cannot reliably emit JSON. Normalize supported tags into `actions[]`; do not expose XML tags as transport-specific source code abstractions.
-- Optional identity resolution is enrichment, not admission control. Resolver errors should log and fail open with `identity: null`.
+- Optional identity resolution is enrichment, not admission control. The agent catches any error from `resolveByPhone`, logs at warn level, and proceeds with `identity: null`. Resolvers should throw on transport, timeout, non-2xx, and parse errors so the agent log captures them.
+- Any HTTP call that runs inline before chat dispatch (identity lookup, future authorization hooks) must enforce a timeout via `AbortSignal.timeout`. Hung lookups will stall buffering and outbound delivery.
+- Sendblue's TypeScript SDK docs reference `SENDBLUE_API_API_KEY` / `SENDBLUE_API_API_SECRET`. This package uses `SENDBLUE_API_KEY_ID` / `SENDBLUE_API_SECRET_KEY` to mirror the documented HTTP header names (`sb-api-key-id` / `sb-api-secret-key`). Keep the existing names; document the discrepancy in user-facing config docs.
 - Prefer structured logs with enough fields to debug webhook delivery, Sendblue API responses, and chat endpoint failures.
 - Avoid adding LLM-specific assumptions to the package contract.
 
@@ -109,5 +116,6 @@ npm run test:e2e
 
 - Keep durable, current implementation docs under `docs/`.
 - Use the existing `docs/features/` format for feature docs: what it does, how it works, code files, configuration, and known limitations.
+- Every load-bearing module (anything in `src/sendblue/`, `src/chat/`, `src/conversation/`, `src/http/`, `src/status/`, `src/identity/`, `src/config/`) should have a feature doc. New PRs that add a module should add or update the corresponding feature doc.
 - Examples should be runnable without Sendblue hardware unless explicitly labeled as E2E. Prefer small Express examples that show the chat endpoint, optional identity lookup, v0.2 request metadata, rich `actions[]`, XML tag compatibility, silence, reactions, replies, hosted media, send effects, and addressed group behavior.
 - Do not add model-provider-specific example code. Example chat endpoints can echo, branch, or demonstrate request parsing, but they should not import OpenAI, Anthropic, or other LLM SDKs.

@@ -501,6 +501,105 @@ describe('conversation intelligence', () => {
     });
   });
 
+  it('treats group replies that contain a prior agent message as a substring as addressed (default fallback)', async () => {
+    chatClient.responses.push({ actions: [{ type: 'message', content: 'yes' }] }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-fallback-seed-1',
+        content: '@sb-agent should we?',
+        group_id: 'group-fallback',
+        message_type: 'group'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.groupCalls).toHaveLength(1);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: { message_handle: 'group-group-fallback', status: 'DELIVERED', service: 'iMessage' }
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-fallback-followup-1',
+        content: 'yes please go ahead',
+        group_id: 'group-fallback',
+        message_type: 'group'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(chatClient.calls).toHaveLength(2);
+  });
+
+  it('ignores prior-message substring fallback when GROUP_INVOCATION_CONTENT_FALLBACK is off', async () => {
+    await close();
+    const tightConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      groupInvocationContentFallback: false
+    });
+    const created = createApp({
+      config: tightConfig,
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+    chatClient.responses.push({ actions: [{ type: 'message', content: 'yes' }] }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [tightConfig.sendblueWebhookSecretHeader]: tightConfig.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-tight-seed-1',
+        content: '@sb-agent should we?',
+        group_id: 'group-tight',
+        message_type: 'group'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.groupCalls).toHaveLength(1);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [tightConfig.sendblueWebhookSecretHeader]: tightConfig.sendblueWebhookSecret! },
+      body: { message_handle: 'group-group-tight', status: 'DELIVERED', service: 'iMessage' }
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [tightConfig.sendblueWebhookSecretHeader]: tightConfig.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-tight-followup-1',
+        content: 'yes please go ahead',
+        group_id: 'group-tight',
+        message_type: 'group'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    // Substring fallback disabled — second inbound is acknowledged but does NOT
+    // invoke the chat endpoint (no @sb-agent mention, no reply metadata).
+    expect(chatClient.calls).toHaveLength(1);
+  });
+
   it('does not call chat when VALID_USER_REQUIRED rejects the resolved identity', async () => {
     const resolver: IdentityResolver = {
       resolveByPhone: vi.fn().mockResolvedValue({ userId: 'blocked-user', authorized: false })
@@ -532,5 +631,241 @@ describe('conversation intelligence', () => {
 
     expect(chatClient.calls).toHaveLength(0);
     expect(sendblueClient.calls).toHaveLength(0);
+  });
+
+  it('drops iMessage send effects on downgraded SMS conversations but still sends text', async () => {
+    chatClient.responses.push({
+      actions: [
+        {
+          type: 'message',
+          content: 'sms text',
+          sendStyle: 'celebration'
+        }
+      ]
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'sms-effect-1',
+        content: 'hello sms',
+        service: 'SMS',
+        was_downgraded: true
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.calls).toEqual([
+      {
+        toNumber: '+15551110001',
+        content: 'sms text',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      }
+    ]);
+  });
+
+  it('skips reactions on SMS or downgraded conversations and continues the queue', async () => {
+    chatClient.responses.push({
+      actions: [
+        { type: 'reaction', reaction: 'love', target: { alias: 'last' } },
+        { type: 'message', content: 'after suppressed reaction' }
+      ]
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'sms-react-1',
+        content: 'react if you can',
+        service: 'SMS',
+        was_downgraded: true
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.reactionCalls).toEqual([]);
+    expect(sendblueClient.calls.map(call => call.content)).toEqual(['after suppressed reaction']);
+  });
+
+  it('sends a read receipt on RCS conversations (mark-read supports RCS per Sendblue docs)', async () => {
+    await close();
+    const rcsConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      readReceiptsEnabled: true
+    });
+    const created = createApp({
+      config: rcsConfig,
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+    chatClient.responses.push({ silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [rcsConfig.sendblueWebhookSecretHeader]: rcsConfig.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'rcs-read-1',
+        content: 'hello rcs',
+        service: 'RCS'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.readCalls).toEqual([{ toNumber: '+15551110001' }]);
+  });
+
+  it('does not send a read receipt on SMS or downgraded conversations', async () => {
+    await close();
+    const smsConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      readReceiptsEnabled: true
+    });
+    const created = createApp({
+      config: smsConfig,
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+    chatClient.responses.push({ silence: true }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [smsConfig.sendblueWebhookSecretHeader]: smsConfig.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'sms-read-1',
+        content: 'hello sms',
+        service: 'SMS'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [smsConfig.sendblueWebhookSecretHeader]: smsConfig.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'downgraded-read-1',
+        content: 'still downgraded',
+        service: 'SMS',
+        was_downgraded: true
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.readCalls).toEqual([]);
+  });
+
+  it('keeps the same conversation record across an iMessage to SMS downgrade', async () => {
+    chatClient.responses.push({ silence: true }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'persist-imessage-1', content: 'before', service: 'iMessage' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'persist-sms-2',
+        content: 'after downgrade',
+        service: 'SMS',
+        was_downgraded: true
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(chatClient.calls).toHaveLength(2);
+    expect(chatClient.calls[0].conversation?.key).toBe('direct:+15552220000:+15551110001');
+    expect(chatClient.calls[1].conversation?.key).toBe('direct:+15552220000:+15551110001');
+    expect(chatClient.calls[1].conversation?.smsDowngraded).toBe(true);
+    expect(chatClient.calls[1].channel).toBe('sms');
+  });
+
+  it('clears smsDowngraded when a previously-downgraded conversation receives a fresh iMessage', async () => {
+    chatClient.responses.push({ silence: true }, { silence: true }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'cycle-imessage-1', content: 'first', service: 'iMessage' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'cycle-sms-2',
+        content: 'downgraded',
+        service: 'SMS',
+        was_downgraded: true
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'cycle-imessage-3', content: 'back on iMessage', service: 'iMessage' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(chatClient.calls).toHaveLength(3);
+    expect(chatClient.calls[1].conversation?.smsDowngraded).toBe(true);
+    expect(chatClient.calls[2].conversation?.smsDowngraded).toBe(false);
+    expect(chatClient.calls[2].channel).toBe('imessage');
+  });
+
+  it('aborts the queue and stops typing on ERROR status', async () => {
+    chatClient.responses.push({ messages: ['first', 'second'] });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'error-abort-1', content: 'hello' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.calls).toHaveLength(1);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: {
+        message_handle: 'sent-1',
+        status: 'ERROR',
+        service: 'iMessage',
+        error_code: '4002',
+        error_message: 'recipient unreachable'
+      }
+    });
+
+    // Queue must abort: the second message must NOT be sent.
+    expect(sendblueClient.calls).toHaveLength(1);
   });
 });

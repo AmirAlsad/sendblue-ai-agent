@@ -398,7 +398,13 @@ export class ConversationAgent {
   }
 
   private async advanceQueue(state: ConversationRecord, messageHandle: string): Promise<void> {
-    if (messageHandle) this.clearDeliveryTimeout(messageHandle);
+    if (messageHandle) {
+      this.clearDeliveryTimeout(messageHandle);
+      // Outbound-handle → conversation-key mapping is no longer needed once
+      // the queue has advanced past this handle; deleting eagerly avoids
+      // stale Redis keys that otherwise live until CONVERSATION_TTL_SECONDS.
+      await this.deps.store.deleteOutboundHandleMapping(messageHandle);
+    }
 
     const delivered = state.outboundQueue[state.currentOutboundIndex];
     if (delivered?.content) state.deliveredMessages.push(delivered.content);
@@ -472,6 +478,16 @@ export class ConversationAgent {
     }
 
     const statusCallback = `${this.deps.config.publicBaseUrl}/webhook/status`;
+    // Send effects (sendStyle) are iMessage-only; safely degrade by dropping
+    // them on SMS/downgraded conversations. The text/media still sends.
+    const sendStyle = this.supportsImessageRichAction(state) ? item.sendStyle : undefined;
+    if (item.sendStyle && !sendStyle) {
+      this.deps.logger.debug(
+        { conversationKey: state.key, actionId: item.id, sendStyle: item.sendStyle },
+        'dropping iMessage send effect on SMS or downgraded conversation'
+      );
+    }
+
     if (state.type === 'group') {
       const client = this.deps.sendblueClient as RichSendblueClient;
       if (!client.sendGroupMessage || !state.groupId) {
@@ -485,7 +501,7 @@ export class ConversationAgent {
         statusCallback
       };
       if (item.mediaUrl) groupMessage.mediaUrl = item.mediaUrl;
-      if (item.sendStyle) groupMessage.sendStyle = item.sendStyle;
+      if (sendStyle) groupMessage.sendStyle = sendStyle;
       return client.sendGroupMessage(groupMessage);
     }
 
@@ -495,7 +511,7 @@ export class ConversationAgent {
       statusCallback
     };
     if (item.mediaUrl) message.mediaUrl = item.mediaUrl;
-    if (item.sendStyle) message.sendStyle = item.sendStyle;
+    if (sendStyle) message.sendStyle = sendStyle;
     return this.deps.sendblueClient.sendMessage(message);
   }
 
@@ -506,6 +522,12 @@ export class ConversationAgent {
     const client = this.deps.sendblueClient as RichSendblueClient;
     if (!client.sendReaction) {
       await this.skipCurrentAction(state, item, 'reaction send is not supported by the configured Sendblue client');
+      return undefined;
+    }
+
+    // Tapback reactions are direct iMessage-only. Suppress on SMS/downgraded.
+    if (!this.supportsImessageRichAction(state)) {
+      await this.skipCurrentAction(state, item, 'reactions are iMessage-only; suppressed on SMS or downgraded conversation');
       return undefined;
     }
 
@@ -592,6 +614,9 @@ export class ConversationAgent {
   }
 
   private shouldSendReadReceipt(state: ConversationRecord): boolean {
+    // Sendblue's read-receipts docs (https://docs.sendblue.com/api-v2/read-receipts/)
+    // explicitly say mark-read works for iMessage AND RCS, not SMS. Downgraded
+    // conversations are SMS-eligible and should not call /api/mark-read.
     return (
       this.deps.config.readReceiptsEnabled &&
       state.type === 'direct' &&
@@ -653,21 +678,43 @@ export class ConversationAgent {
     this.deliveryTimeouts.delete(messageHandle);
   }
 
+  // Channel-aware ordered-delivery gate. Sendblue docs only confirm
+  // iMessage→DELIVERED and SMS→SENT explicitly; RCS conversations are
+  // assumed to follow iMessage and advance on DELIVERED. If a captured live
+  // RCS callback ever shows that RCS terminates at SENT instead, this branch
+  // (and docs/features/ordered-delivery.md) needs adjusting — RCS queues
+  // would otherwise stall waiting for a DELIVERED that never arrives. Pin
+  // before v1.0.
   private successStatus(state: ConversationRecord): 'SENT' | 'DELIVERED' {
     return state.smsDowngraded || state.channel === 'sms' ? 'SENT' : 'DELIVERED';
   }
 
+  // iMessage-only rich actions (send effects, reactions, replies, read
+  // receipts, typing refreshes) must be suppressed or safely degraded for SMS
+  // and downgraded conversations. RCS is treated as not supporting these
+  // iMessage-specific affordances either.
+  private supportsImessageRichAction(state: ConversationRecord): boolean {
+    return state.channel === 'imessage' && !state.smsDowngraded;
+  }
+
   private shouldSendTypingIndicator(state: ConversationRecord): boolean {
+    // Sendblue outbound typing indicators are direct iMessage-only.
     return (
       this.deps.config.outboundTypingIndicatorsEnabled &&
-      state.channel === 'imessage' &&
-      !state.smsDowngraded &&
-      state.type === 'direct'
+      state.type === 'direct' &&
+      this.supportsImessageRichAction(state)
     );
   }
 
   private async transitionToIdle(state: ConversationRecord): Promise<void> {
     this.stopTypingRefresh(state.key);
+    // If an in-flight handle survived to here (e.g. timeout-driven idle),
+    // drop its outbound-handle mapping so a late status callback cannot
+    // reattach to a conversation that has already moved on.
+    if (state.currentOutboundHandle) {
+      this.clearDeliveryTimeout(state.currentOutboundHandle);
+      await this.deps.store.deleteOutboundHandleMapping(state.currentOutboundHandle);
+    }
     state.state = 'idle';
     state.inboundBuffer = [];
     state.lateArrivals = [];
@@ -705,7 +752,11 @@ export class ConversationAgent {
       if (mapping?.conversationKey === conversationKey) return true;
     }
 
-    if (!current) return false;
+    // Substring match against prior agent messages is a soft heuristic — short
+    // agent replies like "yes" cause false positives ("yes please" invokes
+    // the agent). Gated on `GROUP_INVOCATION_CONTENT_FALLBACK` so deployments
+    // can opt out while keeping legacy behavior the default.
+    if (!current || !this.deps.config.groupInvocationContentFallback) return false;
     return current.deliveredMessages.some(message => message.trim() !== '' && webhook.content.includes(message));
   }
 

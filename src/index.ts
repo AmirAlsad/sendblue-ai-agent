@@ -11,15 +11,17 @@ export { resolveTargetRef, type TargetResolution, type TargetResolverMessage } f
 export {
   createChatRequest,
   DEFAULT_CHAT_RESPONSE_TAGS,
+  IMESSAGE_ONLY_ACTION_TYPES,
   type ChatAction,
   type ChatContractWarning,
   type ChatEndpointRequest,
   type ChatEndpointResponse,
   type ChatResponseTagNames,
+  type ImessageOnlyActionType,
   type NormalizedChatEndpointResponse,
   type TargetRef
 } from './chat/types.js';
-export { HttpSendblueClient, type SendblueClient } from './sendblue/client.js';
+export { HttpSendblueClient, SendblueApiError, type SendblueClient } from './sendblue/client.js';
 export { ConversationAgent } from './conversation/agent.js';
 export { calculateBufferTimeout } from './conversation/buffering.js';
 export { InMemoryConversationStore, type ConversationStore } from './conversation/store.js';

@@ -23,6 +23,7 @@ describe('loadConfig', () => {
       MAX_REPROCESS_ATTEMPTS: '3',
       OUTBOUND_DELIVERY_TIMEOUT_MS: '4567',
       USER_LOOKUP_URL: 'https://users.example.test/lookup',
+      IDENTITY_RESOLVER_TIMEOUT_MS: '750',
       OUTBOUND_TYPING_INDICATORS_ENABLED: 'false',
       READ_RECEIPTS_ENABLED: 'true',
       READ_RECEIPT_DEBOUNCE_MS: '222',
@@ -57,6 +58,7 @@ describe('loadConfig', () => {
       maxReprocessAttempts: 3,
       outboundDeliveryTimeoutMs: 4567,
       userLookupUrl: 'https://users.example.test/lookup',
+      identityResolverTimeoutMs: 750,
       outboundTypingIndicatorsEnabled: false,
       readReceiptsEnabled: true,
       readReceiptDebounceMs: 222,
@@ -104,5 +106,160 @@ describe('loadConfig', () => {
 
   it('fails with a useful error when required env is absent', () => {
     expect(() => loadConfig({})).toThrow(/PUBLIC_BASE_URL/);
+  });
+
+  it('reports each required env var by name when missing', () => {
+    const baseRequired: Record<string, string> = {
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key',
+      SENDBLUE_FROM_NUMBER: '+15552220000'
+    };
+
+    for (const name of Object.keys(baseRequired)) {
+      const env = { ...baseRequired };
+      delete env[name];
+      expect(() => loadConfig(env)).toThrowError(new RegExp(name));
+    }
+  });
+
+  it('treats blank required env vars as missing', () => {
+    expect(() =>
+      loadConfig({
+        PUBLIC_BASE_URL: '   ',
+        CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+        SENDBLUE_API_KEY_ID: 'key-id',
+        SENDBLUE_API_SECRET_KEY: 'secret-key',
+        SENDBLUE_FROM_NUMBER: '+15552220000'
+      })
+    ).toThrow(/PUBLIC_BASE_URL/);
+  });
+
+  it('rejects non-numeric integer env vars', () => {
+    expect(() =>
+      loadConfig({
+        PUBLIC_BASE_URL: 'https://agent.example.test',
+        CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+        SENDBLUE_API_KEY_ID: 'key-id',
+        SENDBLUE_API_SECRET_KEY: 'secret-key',
+        SENDBLUE_FROM_NUMBER: '+15552220000',
+        DEDUPE_TTL_SECONDS: 'not-a-number'
+      })
+    ).toThrow(/DEDUPE_TTL_SECONDS/);
+  });
+
+  it('defaults identityResolverTimeoutMs to 5000 and dedupeTtlSeconds to 86400', () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key',
+      SENDBLUE_FROM_NUMBER: '+15552220000'
+    });
+
+    expect(config.identityResolverTimeoutMs).toBe(5000);
+    expect(config.dedupeTtlSeconds).toBe(86400);
+    expect(config.conversationTtlSeconds).toBe(86400);
+    expect(config.userLookupUrl).toBeUndefined();
+    expect(config.redisUrl).toBeUndefined();
+    expect(config.sendblueWebhookSecret).toBeUndefined();
+    expect(config.sendblueWebhookSecretHeader).toBe('sb-signing-secret');
+    expect(config.bufferQueueName).toBe('sendblue-buffer-timers');
+  });
+
+  it('parses booleans loosely and defaults unspecified booleans', () => {
+    const yes = loadConfig({
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key',
+      SENDBLUE_FROM_NUMBER: '+15552220000',
+      READ_RECEIPTS_ENABLED: 'YES',
+      OUTBOUND_TYPING_INDICATORS_ENABLED: 'on',
+      INBOUND_TYPING_STATE_ENABLED: '1',
+      VALID_USER_REQUIRED: 'true'
+    });
+
+    expect(yes.readReceiptsEnabled).toBe(true);
+    expect(yes.outboundTypingIndicatorsEnabled).toBe(true);
+    expect(yes.inboundTypingStateEnabled).toBe(true);
+    expect(yes.validUserRequired).toBe(true);
+
+    const no = loadConfig({
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key',
+      SENDBLUE_FROM_NUMBER: '+15552220000',
+      READ_RECEIPTS_ENABLED: 'maybe'
+    });
+    expect(no.readReceiptsEnabled).toBe(false);
+  });
+
+  it('strips trailing slashes from base URLs', () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: 'https://agent.example.test///',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key',
+      SENDBLUE_FROM_NUMBER: '+15552220000',
+      SENDBLUE_API_BASE_URL: 'https://api.sendblue.example.test/',
+      SENDBLUE_API_V2_BASE_URL: 'https://api-v2.sendblue.example.test/'
+    });
+
+    expect(config.publicBaseUrl).toBe('https://agent.example.test');
+    expect(config.sendblueApiBaseUrl).toBe('https://api.sendblue.example.test');
+    expect(config.sendblueApiV2BaseUrl).toBe('https://api-v2.sendblue.example.test');
+  });
+
+  it('strips angle brackets from chat response tag overrides', () => {
+    const config = loadConfig({
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key',
+      SENDBLUE_FROM_NUMBER: '+15552220000',
+      CHAT_RESPONSE_MESSAGE_TAG: '<m>',
+      CHAT_RESPONSE_REPLY_TAG: '</thread>'
+    });
+
+    expect(config.chatResponseTags.message).toBe('m');
+    expect(config.chatResponseTags.reply).toBe('thread');
+  });
+
+  it('rejects SENDBLUE_FROM_NUMBER values that are not E.164', () => {
+    const baseEnv = {
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key'
+    };
+
+    const invalid = [
+      '++15552220000', // double-plus typo
+      '15552220000', // missing leading +
+      '+15-552-220-000', // dashes
+      '+1 555 222 0000', // spaces
+      '+1', // too short
+      '+12345678901234567' // too long
+    ];
+
+    for (const value of invalid) {
+      expect(() => loadConfig({ ...baseEnv, SENDBLUE_FROM_NUMBER: value })).toThrow(/Invalid E\.164/);
+    }
+  });
+
+  it('accepts valid E.164 SENDBLUE_FROM_NUMBER values across the documented length range', () => {
+    const baseEnv = {
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key'
+    };
+
+    for (const value of ['+15552220000', '+447911123456', '+1234567890', '+123456789012345']) {
+      expect(loadConfig({ ...baseEnv, SENDBLUE_FROM_NUMBER: value }).sendblueFromNumber).toBe(value);
+    }
   });
 });

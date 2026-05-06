@@ -20,6 +20,7 @@
     "capture:fixtures": "node --import tsx scripts/e2e/capture-fixtures.ts",
     "capture:guided": "node --import tsx scripts/e2e/guided-capture.ts",
     "showcase:e2e": "node --import tsx scripts/e2e/showcase.ts",
+    "probe:sendblue": "node --import tsx scripts/e2e/probe-sendblue.ts",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run --config vitest.config.ts tests/unit",
     "test:integration": "vitest run --config vitest.config.ts tests/integration",

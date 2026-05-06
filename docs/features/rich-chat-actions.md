@@ -8,6 +8,12 @@ effects, reactions, contextual replies, silence, and addressed group routing.
 Read receipts and typing refreshes are agent behaviors around the chat request
 and outbound queue, not chat endpoint action types.
 
+The contract is the boundary between this transport package and the developer's
+own chat endpoint. The package never imports a model-provider SDK; the chat
+endpoint can be HTTP/language-agnostic. Tags and rich `actions[]` shapes are
+designed so a developer can return either legacy plain-text or structured
+actions and the agent will degrade safely on SMS/RCS/downgraded conversations.
+
 The legacy v0.2 response forms remain valid:
 
 ```json
@@ -54,24 +60,50 @@ explicit no-op.
 
 Supported action types:
 
-| Type | Purpose |
-| --- | --- |
-| `message` | Send a text and/or hosted-media message through Sendblue. |
-| `media` | Send hosted media, optionally with a caption. |
-| `reaction` | Send a Tapback-style reaction to a previous message when Sendblue exposes a usable target. |
-| `reply` | Preserve contextual reply intent and send as a normal message until Sendblue exposes native replies. |
-| `silence` | Acknowledge intentionally without calling Sendblue. |
+| Type | Purpose | iMessage-only? | Sendblue endpoint |
+| --- | --- | --- | --- |
+| `message` | Send a text and/or hosted-media message through Sendblue. | `sendStyle` is iMessage-only | [`POST /api/send-message`](https://docs.sendblue.com/api/resources/messages/methods/send/) |
+| `media` | Send hosted media, optionally with a caption. | `sendStyle` is iMessage-only | [`POST /api/send-message`](https://docs.sendblue.com/api/resources/messages/methods/send/) with `media_url` |
+| `reaction` | Send a Tapback-style reaction to a previous message. | yes | [`POST /api/send-reaction`](https://docs.sendblue.com/api-v2/reactions/) |
+| `reply` | Preserve contextual reply intent. Sends as a normal message because Sendblue direct send has no native reply target parameter ([Sendblue lists threaded replies as "Coming Soon"](https://docs.sendblue.com/api-v2/)). | `sendStyle` is iMessage-only | `send-message` (no native reply) |
+| `silence` | Acknowledge intentionally without calling Sendblue. | n/a | none |
 
 Message actions use these fields:
 
 - `content` - outbound message body. Empty content is valid only when `mediaUrl` is
   present.
-- `mediaUrl` - HTTPS URL for media already hosted by the application.
-- `sendStyle` - iMessage send effect such as `balloons`, `celebration`, or
-  another Sendblue-supported style.
-- `target` - optional target selector for replies/reactions/read receipts.
-  Message handles are preferred; aliases and content matching are convenience
-  selectors.
+- `mediaUrl` - HTTPS URL for media already hosted by the application. Sendblue
+  fetches the URL at send time, so it must be publicly reachable. Used for
+  images, videos, and vCard contact cards (see Sendblue's
+  [Sending a contact card guide](https://docs.sendblue.com/guides/contact-card/)).
+- `sendStyle` - iMessage send effect. Canonical Sendblue values
+  ([send-message reference](https://docs.sendblue.com/api/resources/messages/methods/send/)):
+
+  | Bubble effects | Screen effects |
+  | --- | --- |
+  | `slam`, `loud`, `gentle`, `invisible` | `celebration`, `shooting_star`, `fireworks`, `lasers`, `love`, `confetti`, `balloons`, `spotlight`, `echo` |
+
+  Unknown send_style values are dropped during normalization without dropping
+  the action. Send effects are iMessage-only and are degraded on
+  SMS/RCS/downgraded conversations by clearing the field before delivery.
+- `target` - optional target selector for replies/reactions. Message handles are
+  preferred (Sendblue's `message_handle` is an Apple GUID from inbound
+  webhooks); aliases (`last|latest|current`, `first|oldest`, `previous|prior`)
+  and content matching are convenience selectors resolved against the
+  conversation's inbound buffer at send time.
+
+Reaction actions use these fields:
+
+- `reaction` - Tapback type. Sendblue accepts exactly six values
+  ([reactions reference](https://docs.sendblue.com/api-v2/reactions/)):
+  `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`. The normalizer
+  also accepts the legacy aliases `heart` (mapped to `love`) and `haha`
+  (mapped to `laugh`); any other value is dropped.
+- `target` - the inbound message to react to. Required. Defaults to alias
+  `last` if the chat endpoint omits it.
+
+Reactions are iMessage-only at the Sendblue transport layer and are suppressed
+entirely on SMS/RCS/downgraded conversations.
 
 `reply` actions preserve contextual intent in the chat contract. Current
 Sendblue direct message sends do not expose a native reply target parameter, so
@@ -179,3 +211,20 @@ Sendblue behavior that cannot be simulated locally:
 - SMS and downgraded conversations must suppress iMessage-only actions such as
   effects, reactions, read receipts, and typing refreshes unless Sendblue
   documents a safe fallback.
+- Sendblue does not expose a `reply_to` / `in_reply_to` parameter on
+  `send-message` ([Sendblue API v2 reference](https://docs.sendblue.com/api-v2/)
+  lists threaded replies as a "Coming Soon" feature). The agent currently
+  delivers `reply` actions as ordinary messages and logs the resolved target.
+- Read receipts: per the
+  [read receipts reference](https://docs.sendblue.com/api-v2/read-receipts/),
+  `POST /api/mark-read` works for both iMessage and RCS conversations and
+  requires the feature to be enabled on the Sendblue account. The agent treats
+  read receipts as a best-effort agent-side behavior with no `READ` status
+  callback to wait on.
+- Outbound typing indicators are direct iMessage-only
+  ([typing indicators reference](https://docs.sendblue.com/api-v2/typing-indicators/));
+  the agent suppresses them on SMS, RCS, downgraded, and group conversations.
+- The carousel endpoint
+  ([carousel reference](https://docs.sendblue.com/api-v2/carousel/)) is V2-only
+  and is not exposed as a chat action type. Multi-image carousels would
+  require a future `carousel` action.

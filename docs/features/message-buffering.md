@@ -40,7 +40,12 @@ top-level backward-compatible `message` field by joining buffered text with:
 \n---\n
 ```
 
-It also sends structured `messages[]` with per-message Sendblue metadata.
+It also sends structured `messages[]` with per-message Sendblue metadata, plus
+`conversation`, `identity`, `typing`, and `sendblue` context objects (see
+[`conversation-state.md`](conversation-state.md) for the full request shape).
+The conversation key is one record across iMessage, RCS, SMS, and downgraded
+states — buffer state is preserved across channel transitions in a single
+direct conversation record.
 
 If a new inbound arrives during `processing`, it is stored in `lateArrivals`.
 After the current chat call returns, the agent re-enters `buffering`, merges

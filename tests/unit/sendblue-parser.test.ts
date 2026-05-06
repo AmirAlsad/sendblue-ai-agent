@@ -135,6 +135,95 @@ describe('Sendblue webhook parsing', () => {
     expect(() => parseReceiveWebhook({ content: 'no handle' })).toThrow(/from_number/);
   });
 
+  it('rejects non-object receive payloads', () => {
+    expect(() => parseReceiveWebhook(null)).toThrow(/must be an object/);
+    expect(() => parseReceiveWebhook('not-an-object')).toThrow(/must be an object/);
+    expect(() => parseReceiveWebhook([{ content: 'arr' }])).toThrow(/must be an object/);
+  });
+
+  it('rejects empty required identifiers but allows empty content (media-only)', () => {
+    // Required identifiers must be non-empty.
+    expect(() =>
+      parseReceiveWebhook({
+        content: '',
+        from_number: '',
+        to_number: '+15552220000',
+        message_handle: 'h-1'
+      })
+    ).toThrow(/from_number/);
+
+    // Empty content is legal (e.g. media-only inbound, observed tapback echoes).
+    const parsed = parseReceiveWebhook({
+      content: '',
+      from_number: '+15551110001',
+      to_number: '+15552220000',
+      message_handle: 'recv-empty-content-001',
+      media_url: 'https://cdn.example.test/audio.m4a',
+      service: 'iMessage'
+    });
+    expect(parsed.content).toBe('');
+    expect(parsed.mediaUrl).toBe('https://cdn.example.test/audio.m4a');
+  });
+
+  it('surfaces documented Sendblue envelope metadata for receive webhooks', () => {
+    const parsed = parseReceiveWebhook(
+      loadFixture<{ body: unknown }>('sendblue/captured/observed/basic-text.json').body
+    );
+    expect(parsed.accountEmail).toBe('agent@example.test');
+    expect(parsed.plan).toBe('dedicated');
+    expect(parsed.optedOut).toBe(false);
+    expect(parsed.number).toBe('+15550000001');
+    expect(parsed.dateSent).toBe('2026-05-06T04:00:00.000Z');
+    expect(parsed.dateUpdated).toBe('2026-05-06T04:00:00.000Z');
+    expect(parsed.errorCode).toBeUndefined();
+    expect(parsed.errorMessage).toBeUndefined();
+    expect(parsed.errorDetail).toBeUndefined();
+    expect(parsed.errorReason).toBeUndefined();
+  });
+
+  it('preserves null group_display_name distinctly from empty string', () => {
+    const withNullName = parseReceiveWebhook({
+      content: 'hi',
+      from_number: '+15551110001',
+      to_number: '+15552220000',
+      message_handle: 'recv-null-display-001',
+      group_display_name: null
+    });
+    expect(withNullName.groupDisplayName).toBeNull();
+
+    const withEmptyName = parseReceiveWebhook({
+      content: 'hi',
+      from_number: '+15551110001',
+      to_number: '+15552220000',
+      message_handle: 'recv-empty-display-001',
+      group_display_name: ''
+    });
+    expect(withEmptyName.groupDisplayName).toBe('');
+  });
+
+  it('captures media-only inbound payload shape with empty content', () => {
+    const parsed = parseReceiveWebhook({
+      accountEmail: 'agent@example.test',
+      content: '',
+      is_outbound: false,
+      status: 'RECEIVED',
+      message_handle: 'recv-media-only-001',
+      from_number: '+15551110001',
+      number: '+15551110001',
+      to_number: '+15552220000',
+      was_downgraded: null,
+      media_url: 'https://cdn.example.test/photo.png',
+      message_type: 'message',
+      group_id: '',
+      participants: [],
+      send_style: '',
+      service: 'iMessage'
+    });
+    expect(parsed.content).toBe('');
+    expect(parsed.mediaUrl).toBe('https://cdn.example.test/photo.png');
+    expect(parsed.status).toBe('RECEIVED');
+  });
+
   it('parses delivered and error status callbacks', () => {
     expect(parseStatusWebhook(loadFixture('sendblue/status-delivered.json'))).toMatchObject({
       messageHandle: 'outbound-001',
@@ -165,6 +254,59 @@ describe('Sendblue webhook parsing', () => {
         status: 'RECEIVED'
       })
     ).toThrow(/invalid Sendblue status/);
+  });
+
+  it('rejects status callbacks missing message_handle', () => {
+    expect(() =>
+      parseStatusWebhook({
+        status: 'DELIVERED'
+      })
+    ).toThrow(/message_handle/);
+  });
+
+  it('rejects non-object status payloads', () => {
+    expect(() => parseStatusWebhook(null)).toThrow(/must be an object/);
+    expect(() => parseStatusWebhook(42)).toThrow(/must be an object/);
+  });
+
+  it('parses every documented status value (REGISTERED through ERROR)', () => {
+    const documented = [
+      'REGISTERED',
+      'PENDING',
+      'DECLINED',
+      'QUEUED',
+      'ACCEPTED',
+      'SENT',
+      'DELIVERED',
+      'ERROR'
+    ] as const;
+    for (const status of documented) {
+      const parsed = parseStatusWebhook({ message_handle: `out-${status}`, status });
+      expect(parsed.status, status).toBe(status);
+    }
+  });
+
+  it('preserves status-callback envelope metadata and SMS service marker', () => {
+    const parsed = parseStatusWebhook(loadFixture('sendblue/status-error.json'));
+    expect(parsed.fromNumber).toBe('+15552220000');
+    expect(parsed.toNumber).toBe('+15551110001');
+    expect(parsed.errorDetail).toBe(
+      'Reduce send frequency or wait for the current window to reset'
+    );
+    expect(parsed.service).toBe('SMS');
+    expect(parsed.wasDowngraded).toBe(true);
+  });
+
+  it('parses error_reason when Sendblue includes one', () => {
+    const parsed = parseStatusWebhook({
+      message_handle: 'outbound-reasoned-001',
+      status: 'ERROR',
+      error_code: '4001',
+      error_message: 'Rate limit exceeded',
+      error_reason: 'Too many sends in window'
+    });
+    expect(parsed.errorReason).toBe('Too many sends in window');
+    expect(parsed.errorCode).toBe('4001');
   });
 
   it('preserves generic operational webhook payloads for future handlers', () => {
@@ -201,5 +343,54 @@ describe('Sendblue webhook parsing', () => {
       isTyping: true,
       timestamp: '2026-05-06T12:00:00.000Z'
     });
+  });
+
+  it('rejects typing indicator payloads missing required identifiers', () => {
+    expect(() =>
+      parseTypingIndicatorWebhook({
+        from_number: '+15552220000',
+        is_typing: false
+      })
+    ).toThrow(/number/);
+    expect(() =>
+      parseTypingIndicatorWebhook({
+        number: '+15551110001',
+        is_typing: false
+      })
+    ).toThrow(/from_number/);
+    expect(() => parseTypingIndicatorWebhook(null)).toThrow(/must be an object/);
+  });
+
+  it('treats non-boolean is_typing as false', () => {
+    const parsed = parseTypingIndicatorWebhook({
+      number: '+15551110001',
+      from_number: '+15552220000'
+    });
+    expect(parsed.isTyping).toBe(false);
+  });
+
+  it('preserves call_log event_type and metadata on operational webhooks', () => {
+    const parsed = parseOperationalWebhook({
+      event_type: 'call_log',
+      call_id: 'call-001',
+      from_number: '+15551110001',
+      to_number: '+15552220000',
+      direction: 'inbound',
+      status: 'completed',
+      duration: 42,
+      provider: 'twilio',
+      transcript: 'hello'
+    });
+    expect(parsed.eventType).toBe('call_log');
+    expect(parsed.fromNumber).toBe('+15551110001');
+    expect(parsed.toNumber).toBe('+15552220000');
+    expect(parsed.status).toBe('completed');
+    expect(parsed.raw.call_id).toBe('call-001');
+    expect(parsed.raw.duration).toBe(42);
+  });
+
+  it('rejects non-object operational payloads', () => {
+    expect(() => parseOperationalWebhook(null)).toThrow(/must be an object/);
+    expect(() => parseOperationalWebhook('not-an-object')).toThrow(/must be an object/);
   });
 });

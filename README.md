@@ -17,6 +17,7 @@ npm run verify:e2e
 npm run dev:e2e
 npm run capture:fixtures
 npm run capture:guided
+npm run probe:sendblue
 npm run test:e2e
 npm run typecheck
 ```
@@ -58,8 +59,11 @@ the production path for durable buffering, dedupe, and queue state.
 - [Architecture](docs/ARCHITECTURE.md)
 - [Configuration and tunables](docs/features/configuration.md)
 - [Inbound webhooks](docs/features/inbound-webhooks.md)
+- [Outbound Sendblue client](docs/features/outbound-client.md)
+- [Webhook security](docs/features/webhook-security.md)
 - [Message buffering and interruptions](docs/features/message-buffering.md)
 - [Ordered delivery](docs/features/ordered-delivery.md)
+- [Status tracking](docs/features/status-tracking.md)
 - [Typing indicators](docs/features/typing-indicators.md)
 - [Identity resolver](docs/features/identity-resolver.md)
 - [Conversation state and chat contract](docs/features/conversation-state.md)
@@ -89,7 +93,7 @@ Required for the agent:
 - `CHAT_ENDPOINT_URL`
 - `SENDBLUE_API_KEY_ID`
 - `SENDBLUE_API_SECRET_KEY`
-- `SENDBLUE_FROM_NUMBER`
+- `SENDBLUE_FROM_NUMBER` (must be valid E.164 — leading `+` then 10–15 digits, e.g. `+15551234567`. Invalid values throw at `loadConfig` startup so a `.env` typo fails fast instead of silently 400ing the first Sendblue call.)
 
 Optional for webhook secret validation:
 
@@ -117,7 +121,10 @@ Optional for rich Sendblue actions:
 - `CHAT_RESPONSE_REACTION_TAG` (defaults to `reaction`)
 - `CHAT_RESPONSE_REPLY_TAG` (defaults to `reply`)
 - `READ_RECEIPTS_ENABLED` (defaults to `false`; gates best-effort
-  `POST /api/mark-read` calls and does not create a `READ` status callback)
+  `POST /api/mark-read` calls. Per Sendblue's docs read receipts work for
+  iMessage **and RCS** (not SMS or downgraded). The feature is also account-
+  gated by Sendblue — contact support@sendblue.com to enable. There is no
+  `READ` status callback.)
 - `READ_RECEIPT_DEBOUNCE_MS` (defaults to `250`)
 - `TYPING_REFRESH_INTERVAL_MS` (defaults to `5000`)
 - `TYPING_REFRESH_MAX_MS` (defaults to `120000`)
@@ -171,6 +178,7 @@ npm run dev:e2e
 npm run capture:fixtures
 npm run capture:guided
 npm run showcase:e2e
+npm run probe:sendblue
 ```
 
 `setup:e2e` creates `.env` if needed. `verify:e2e` checks the ngrok auth token,
@@ -194,6 +202,14 @@ active scenario before being written to `.captures/sendblue/`.
 Use `npm run capture:guided -- --list` to show scenario IDs, or run a focused
 capture with `npm run capture:guided -- --only tapback-custom-emoji,group-message`.
 Observed payload structures are summarized in `docs/SENDBLUE-PAYLOAD-STRUCTURES.md`.
+
+`probe:sendblue` is a one-shot diagnostic that calls `POST /api/mark-read`
+against `E2E_TEST_DEVICE_NUMBER` and prints the response (success shape or
+`SendblueApiError` body). Useful for verifying the read-receipt account flag
+after support enables it, or for catching `from_number` typos that survive
+`requireEnv` but fail Sendblue's E.164 check. Sends no outbound message and
+mutates no webhook config; a successful call does deliver a UI-visible read
+receipt to the recipient's device.
 
 `showcase:e2e` starts a live scenario-aware chat endpoint, the agent, ngrok,
 and managed Sendblue webhooks, then sends guided prompts to

@@ -84,4 +84,51 @@ describe('chat target resolver', () => {
       reason: 'missing_history'
     });
   });
+
+  it('resolves all built-in alias spellings including current/oldest/prior', () => {
+    expect(resolveTargetRef(history, { alias: 'current' })).toMatchObject({ ok: true, index: 2 });
+    expect(resolveTargetRef(history, { alias: 'latest' })).toMatchObject({ ok: true, index: 2 });
+    expect(resolveTargetRef(history, { alias: 'oldest' })).toMatchObject({ ok: true, index: 0 });
+    expect(resolveTargetRef(history, { alias: 'first' })).toMatchObject({ ok: true, index: 0 });
+    expect(resolveTargetRef(history, { alias: 'prior' })).toMatchObject({ ok: true, index: 1 });
+    expect(resolveTargetRef(history, { alias: 'previous' })).toMatchObject({ ok: true, index: 1 });
+  });
+
+  it('returns latest when no target is supplied', () => {
+    expect(resolveTargetRef(history)).toMatchObject({ ok: true, index: 2 });
+  });
+
+  it('reports not_found when previous is requested with single-message history', () => {
+    expect(resolveTargetRef([history[0]], { alias: 'previous' })).toEqual({
+      ok: false,
+      reason: 'not_found'
+    });
+  });
+
+  it('rejects negative or non-integer partIndex without content', () => {
+    expect(resolveTargetRef(history, { partIndex: -1 })).toMatchObject({
+      ok: false,
+      reason: 'invalid_part_index'
+    });
+    expect(resolveTargetRef(history, { partIndex: 1.5 })).toMatchObject({
+      ok: false,
+      reason: 'invalid_part_index'
+    });
+  });
+
+  it('honors first / last occurrence when content is ambiguous', () => {
+    expect(
+      resolveTargetRef(history, { contentIncludes: 'duplicate text', occurrence: 'first' })
+    ).toMatchObject({ ok: true, index: 1 });
+    expect(
+      resolveTargetRef(history, { contentIncludes: 'duplicate text', occurrence: 'last' })
+    ).toMatchObject({ ok: true, index: 2 });
+  });
+
+  it('does case-insensitive content matching', () => {
+    expect(resolveTargetRef(history, { content: 'FIRST QUESTION' })).toMatchObject({
+      ok: true,
+      index: 0
+    });
+  });
 });

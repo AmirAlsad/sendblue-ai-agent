@@ -20,11 +20,27 @@ The Express app exposes these endpoints:
 - `POST /webhook/line-assigned`
 - `POST /webhook/contact-created`
 
-`/webhook/receive` parses required Sendblue fields (`content`, `from_number`,
-`to_number`, `message_handle`) plus future-facing metadata such as `service`,
-`was_downgraded`, `media_url`, `group_id`, `participants`, `send_style`, and
-`message_type`. Unknown fields are preserved under `raw` and are forwarded to
-the chat endpoint for direct messages.
+`/webhook/receive` requires `from_number`, `to_number`, `message_handle`, and
+a string `content` field; the latter may be an empty string because Sendblue
+ships media-only inbounds (and some tapback echoes) with `content: ""`.
+The parser also surfaces documented Sendblue envelope metadata so that
+downstream code does not need to reach into `raw` for routine fields:
+
+- Routing: `service`, `was_downgraded`, `sendblue_number`
+- Media and effects: `media_url`, `send_style`
+- Group routing: `group_id`, `group_display_name`, `participants`
+- Identity: `accountEmail`, `plan`, `opted_out`, `sender_email`, `seat_id`
+- Diagnostics: `message_type`, `number`, `date_sent`, `date_updated`
+- Error envelope: `error_code`, `error_message`, `error_detail`, `error_reason`
+
+The full original payload is preserved on `raw` and forwarded to the chat
+endpoint for direct messages, so unmodeled fields (e.g. future reply or
+reaction metadata) remain inspectable without a parser change.
+
+Sendblue does not document a top-level `event_type` discriminator on the
+shared message envelope; the route the webhook arrives on is the source of
+truth for inbound vs. outbound vs. typing vs. operational. The `call_log`
+operational payload is the only event that includes an `event_type` field.
 
 Direct messages are keyed as:
 
@@ -43,12 +59,26 @@ payloads include explicit reply metadata for the agent.
 
 `/webhook/status` tracks Sendblue outbound lifecycle statuses and advances
 ordered delivery queues when the current message reaches the expected
-channel-specific gate. `/webhook/typing-indicator` stores inbound typing state
-when enabled and does not call the chat endpoint on its own. This route reflects
-Sendblue's documented `typing_indicator` webhook type, but live accounts must
-verify that the webhook registration API accepts and persists that type before
-depending on inbound typing. Other operational webhooks are parsed generically,
-logged, and acknowledged for future feature work.
+channel-specific gate. The eight documented status values are `REGISTERED`,
+`PENDING`, `DECLINED`, `QUEUED`, `ACCEPTED`, `SENT`, `DELIVERED`, and `ERROR`.
+`READ` is not a documented status callback, and `RECEIVED` is reserved for
+inbound payloads only — both are rejected with a 400 by `parseStatusWebhook`.
+The status parser also preserves the message envelope (`from_number`,
+`to_number`, `service`, `was_downgraded`, `accountEmail`, `plan`, `group_id`,
+`date_sent`, `date_updated`, `error_reason`) for diagnostics.
+
+`/webhook/typing-indicator` stores inbound typing state when enabled and does
+not call the chat endpoint on its own. The documented payload includes
+`number` (the contact who is typing), `from_number` (the Sendblue line
+receiving the indicator), `is_typing`, and an ISO-8601 `timestamp`. Inbound
+typing is iMessage-only. This route reflects Sendblue's documented
+`typing_indicator` webhook type, but live accounts must verify that the
+webhook registration API accepts and persists that type before depending on
+inbound typing. Other operational webhooks (`call_log`, `line_blocked`,
+`line_assigned`, `contact_created`) are parsed generically, logged, and
+acknowledged for future feature work — only `call_log` has a fully documented
+field schema upstream; the rest are listed as supported types without payload
+specifications.
 
 If `SENDBLUE_WEBHOOK_SECRET` is configured, every webhook route requires either
 the configured secret header or `sb-signing-secret` to match. If no secret is
@@ -90,3 +120,11 @@ configured, webhook secret validation is skipped.
   `typing_indicator` despite the public docs listing it.
 - `READ` and `RECEIVED` are not accepted as outbound status callback statuses;
   `RECEIVED` is only valid as an inbound receive payload status.
+- Sendblue does not publish payload schemas for `line_blocked`, `line_assigned`,
+  or `contact_created`, so the operational parser is intentionally permissive.
+  Real captured payloads should be promoted into `tests/fixtures/` (with
+  redaction) before tightening these types.
+- Inbound `content` may be an empty string when Sendblue ships a media-only
+  iMessage. The parser accepts `content: ""` and only rejects when the field
+  is missing or non-string; the conversation router treats empty `content`
+  combined with a `media_url` as a media inbound.

@@ -65,7 +65,8 @@ Unit tests should run without hardware and cover:
 
 E2E tests should be separate from CI by default and require:
 
-- A real iMessage-capable device or BlueBubbles-backed Mac
+- A macOS host signed into Messages.app with iMessage enabled
+- Full Disk Access for the terminal or test runner reading `~/Library/Messages/chat.db`
 - Sendblue credentials and dedicated line
 - A public tunnel such as ngrok
 - Real Sendblue dashboard/API webhook configuration

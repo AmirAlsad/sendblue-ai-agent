@@ -1,0 +1,30 @@
+{
+  "headers": {
+    "content-type": "application/json",
+    "x-sendblue-test-secret": "test-webhook-secret"
+  },
+  "body": {
+    "accountEmail": "agent@example.test",
+    "content": "captured fixture reply",
+    "is_outbound": true,
+    "status": "DELIVERED",
+    "error_code": null,
+    "error_message": null,
+    "error_reason": null,
+    "message_handle": "captured-outbound-001",
+    "date_sent": "2026-05-05T15:00:02.000Z",
+    "date_updated": "2026-05-05T15:00:05.000Z",
+    "from_number": "+15550000002",
+    "number": "+15550000001",
+    "to_number": "+15550000001",
+    "was_downgraded": false,
+    "media_url": "",
+    "message_type": "message",
+    "group_id": "",
+    "participants": [],
+    "send_style": "",
+    "service": "iMessage"
+  },
+  "receivedAt": "2026-05-05T15:00:06.000Z",
+  "path": "/webhook/status"
+}

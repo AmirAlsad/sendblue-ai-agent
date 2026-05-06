@@ -1,0 +1,17 @@
+{
+  "accountEmail": "agent@example.com",
+  "content": "photo",
+  "is_outbound": false,
+  "status": "REGISTERED",
+  "message_handle": "recv-media-group-001",
+  "from_number": "+15551110002",
+  "to_number": "+15552220000",
+  "was_downgraded": false,
+  "media_url": "https://cdn.example.test/photo.png",
+  "message_type": "message",
+  "group_id": "group-123",
+  "participants": ["+15551110002", "+15551110003"],
+  "send_style": "celebration",
+  "service": "iMessage",
+  "undocumented_future_field": "preserved"
+}

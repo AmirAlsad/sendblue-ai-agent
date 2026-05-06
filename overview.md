@@ -71,10 +71,10 @@ Group conversation support (routing by `group_id`, participant awareness, group 
 
 ## Testing Philosophy
 
-The test harness is arguably the most important component in this repo. Because Sendblue has no webhook simulator or sandbox-to-sandbox messaging, the only way to validate the full pipeline is with real iMessages. The repo includes:
+The test harness is arguably the most important component in this repo. Because Sendblue has no webhook simulator or sandbox-to-sandbox messaging, the only way to validate the full text pipeline is with real iMessages. The repo includes:
 
-- **Unit tests** that replay captured Sendblue webhook fixtures against the handler code, with mocked outbound calls. These run on any machine, no hardware required, and cover the bulk of regression testing.
-- **End-to-end tests** that send real iMessages through the full loop using a BlueBubbles server running on a Mac. These validate the entire pipeline from "user sends iMessage" to "AI response arrives as iMessage on user's device."
+- **Unit tests** that replay captured Sendblue webhook fixtures against the handler code, with mocked outbound calls. These run on any machine, no hardware required, and cover the bulk of regression testing — including all rich messaging scenarios (tapbacks, reactions, send effects, media, SMS fallback). Fixtures are captured once from real Sendblue webhooks during initial development and stored in the repo as the source of truth.
+- **End-to-end tests** that send real iMessages through the full text loop using native macOS tooling — `osascript` (AppleScript) for sending messages and `sqlite3` against `~/Library/Messages/chat.db` for reading responses. These validate the core pipeline from "user sends iMessage" to "AI response arrives as iMessage on the test Mac." No third-party iMessage servers or SIP modifications required.
 
 Both tiers are documented in `testing-infrastructure.md`.
 

@@ -1,0 +1,22 @@
+{
+  "accountEmail": "agent@example.com",
+  "content": "hello back",
+  "is_outbound": true,
+  "status": "DELIVERED",
+  "error_code": null,
+  "error_message": null,
+  "error_reason": null,
+  "message_handle": "outbound-001",
+  "date_sent": "2026-05-04T19:00:01.000Z",
+  "date_updated": "2026-05-04T19:00:03.000Z",
+  "from_number": "+15552220000",
+  "number": "+15551110001",
+  "to_number": "+15551110001",
+  "was_downgraded": null,
+  "media_url": "",
+  "message_type": "message",
+  "group_id": "",
+  "participants": [],
+  "send_style": "",
+  "service": "iMessage"
+}

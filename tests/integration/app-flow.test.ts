@@ -1,0 +1,317 @@
+import pino from 'pino';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createApp } from '../../src/http/app.js';
+import type { ChatClient } from '../../src/chat/client.js';
+import type { ChatEndpointRequest, ChatEndpointResponse } from '../../src/chat/types.js';
+import type { SendblueClient } from '../../src/sendblue/client.js';
+import type { SendblueOutboundMessage, SendblueSendResult } from '../../src/sendblue/types.js';
+import { InMemoryStatusStore } from '../../src/status/tracker.js';
+import { replayCapturedEnvelope } from '../helpers/captured-envelopes.js';
+import { dispatch } from '../helpers/dispatch.js';
+import { loadFixture } from '../helpers/fixtures.js';
+import { testConfig } from '../helpers/config.js';
+
+class FakeChatClient implements ChatClient {
+  calls: ChatEndpointRequest[] = [];
+  nextResponse: ChatEndpointResponse = { messages: ['default reply'] };
+  nextError: Error | undefined;
+
+  async complete(requestBody: ChatEndpointRequest): Promise<ChatEndpointResponse> {
+    this.calls.push(requestBody);
+    if (this.nextError) throw this.nextError;
+    return this.nextResponse;
+  }
+}
+
+class FakeSendblueClient implements SendblueClient {
+  calls: SendblueOutboundMessage[] = [];
+
+  async sendMessage(message: SendblueOutboundMessage): Promise<SendblueSendResult> {
+    this.calls.push(message);
+    return { messageHandle: `sent-${this.calls.length}`, raw: { ok: true } };
+  }
+}
+
+describe('agent app flow', () => {
+  const config = testConfig();
+  let chatClient: FakeChatClient;
+  let sendblueClient: FakeSendblueClient;
+  let statusStore: InMemoryStatusStore;
+  let app: ReturnType<typeof createApp>['app'];
+
+  beforeEach(() => {
+    chatClient = new FakeChatClient();
+    sendblueClient = new FakeSendblueClient();
+    statusStore = new InMemoryStatusStore();
+    app = createApp({
+      config,
+      chatClient,
+      sendblueClient,
+      statusStore,
+      logger: pino({ level: 'silent' })
+    }).app;
+  });
+
+  it('runs the basic receive to chat to outbound Sendblue flow', async () => {
+    chatClient.nextResponse = { messages: ['reply one', 'reply two'] };
+
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: loadFixture('sendblue/receive-basic.json')
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ ok: true, sent: 2 });
+
+    expect(chatClient.calls).toHaveLength(1);
+    expect(chatClient.calls[0]).toMatchObject({
+      message: 'hello from iMessage',
+      fromNumber: '+15551110001',
+      messageHandle: 'recv-basic-001',
+      channel: 'imessage'
+    });
+
+    expect(sendblueClient.calls).toEqual([
+      {
+        toNumber: '+15551110001',
+        content: 'reply one',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      },
+      {
+        toNumber: '+15551110001',
+        content: 'reply two',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      }
+    ]);
+  });
+
+  it('deduplicates receive webhook retries by message_handle', async () => {
+    const payload = loadFixture<Record<string, unknown>>('sendblue/receive-basic.json');
+
+    expect(
+      (
+        await dispatch(app, {
+          method: 'POST',
+          path: '/webhook/receive',
+          headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+          body: payload
+        })
+      ).status
+    ).toBe(202);
+
+    const duplicate = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: payload
+    });
+
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body).toEqual({ ok: true, duplicate: true });
+    expect(chatClient.calls).toHaveLength(1);
+    expect(sendblueClient.calls).toHaveLength(1);
+  });
+
+  it('passes SMS downgrade metadata to the chat endpoint', async () => {
+    expect(
+      (
+        await dispatch(app, {
+          method: 'POST',
+          path: '/webhook/receive',
+          headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+          body: loadFixture('sendblue/receive-downgraded.json')
+        })
+      ).status
+    ).toBe(202);
+
+    expect(chatClient.calls[0]).toMatchObject({
+      channel: 'sms',
+      sendblue: {
+        wasDowngraded: true,
+        service: 'SMS'
+      }
+    });
+  });
+
+  it('accepts silence responses without calling Sendblue', async () => {
+    chatClient.nextResponse = { silence: true };
+
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: loadFixture('sendblue/receive-basic.json')
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ ok: true, sent: 0 });
+    expect(sendblueClient.calls).toHaveLength(0);
+  });
+
+  it('returns 502 when the chat endpoint fails', async () => {
+    chatClient.nextError = new Error('chat down');
+
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: loadFixture('sendblue/receive-basic.json')
+    });
+
+    expect(response.status).toBe(502);
+    expect(sendblueClient.calls).toHaveLength(0);
+  });
+
+  it('rejects receive requests with an invalid webhook secret', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: 'wrong' },
+      body: loadFixture('sendblue/receive-basic.json')
+    });
+
+    expect(response.status).toBe(401);
+    expect(chatClient.calls).toHaveLength(0);
+  });
+
+  it('tracks status callbacks', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: loadFixture('sendblue/status-delivered.json')
+    });
+
+    expect(response.status).toBe(200);
+    expect(statusStore.get('outbound-001')).toMatchObject({
+      messageHandle: 'outbound-001',
+      history: ['DELIVERED'],
+      terminalStatus: 'DELIVERED'
+    });
+  });
+
+  it('replays a captured receive envelope through the app handlers', async () => {
+    chatClient.nextResponse = { messages: ['captured reply'] };
+
+    const response = await replayCapturedEnvelope(
+      app,
+      loadFixture('sendblue/captured/redacted-receive-envelope.json')
+    );
+
+    expect(response.status).toBe(202);
+    expect(chatClient.calls[0]).toMatchObject({
+      message: 'captured fixture hello',
+      messageHandle: 'captured-recv-001',
+      sendblue: {
+        groupId: 'captured-group-001',
+        participants: ['+15550000001', '+15550000003']
+      }
+    });
+    expect(sendblueClient.calls).toEqual([
+      {
+        toNumber: '+15550000001',
+        content: 'captured reply',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      }
+    ]);
+  });
+
+  it('replays a captured status envelope through the app handlers', async () => {
+    const response = await replayCapturedEnvelope(
+      app,
+      loadFixture('sendblue/captured/redacted-status-envelope.json')
+    );
+
+    expect(response.status).toBe(200);
+    expect(statusStore.get('captured-outbound-001')).toMatchObject({
+      messageHandle: 'captured-outbound-001',
+      terminalStatus: 'DELIVERED'
+    });
+  });
+
+  it('rejects malformed receive payloads', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: { content: 'missing required fields' }
+    });
+
+    expect(response.status).toBe(400);
+    expect(chatClient.calls).toHaveLength(0);
+  });
+
+  it('does not enforce webhook secret when no secret is configured', async () => {
+    app = createApp({
+      config: testConfig({ sendblueWebhookSecret: undefined }),
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    }).app;
+
+    expect(
+      (
+        await dispatch(app, {
+          method: 'POST',
+          path: '/webhook/receive',
+          body: loadFixture('sendblue/receive-basic.json')
+        })
+      ).status
+    ).toBe(202);
+    expect(chatClient.calls).toHaveLength(1);
+  });
+
+  it('supports health checks', async () => {
+    const response = await dispatch(app, { method: 'GET', path: '/health' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: true });
+  });
+
+  it('leaves room for status callback retries without duplicate adjacent history', async () => {
+    const payload = loadFixture<Record<string, unknown>>('sendblue/status-delivered.json');
+
+    expect(
+      (
+        await dispatch(app, {
+          method: 'POST',
+          path: '/webhook/status',
+          headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+          body: payload
+        })
+      ).status
+    ).toBe(200);
+    expect(
+      (
+        await dispatch(app, {
+          method: 'POST',
+          path: '/webhook/status',
+          headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+          body: payload
+        })
+      ).status
+    ).toBe(200);
+
+    expect(statusStore.get('outbound-001')?.history).toEqual(['DELIVERED']);
+  });
+
+  it('uses the injected dependencies only', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    expect(
+      (
+        await dispatch(app, {
+          method: 'POST',
+          path: '/webhook/receive',
+          headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+          body: loadFixture('sendblue/receive-basic.json')
+        })
+      ).status
+    ).toBe(202);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+});

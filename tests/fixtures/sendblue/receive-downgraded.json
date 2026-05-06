@@ -1,0 +1,15 @@
+{
+  "content": "sms fallback hello",
+  "is_outbound": false,
+  "status": "REGISTERED",
+  "message_handle": "recv-downgraded-001",
+  "from_number": "+15551110004",
+  "to_number": "+15552220000",
+  "was_downgraded": true,
+  "media_url": "",
+  "message_type": "message",
+  "group_id": "",
+  "participants": [],
+  "send_style": "",
+  "service": "SMS"
+}

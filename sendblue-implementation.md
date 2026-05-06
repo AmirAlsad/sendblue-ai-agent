@@ -107,7 +107,7 @@ This version adds the iMessage-specific features that make the agent feel native
 
 **What "done" looks like for v0.3:**
 
-The agent handles images, video, and files in both directions. The AI can send celebration effects. Tapbacks from the user are forwarded to the chat endpoint. When a message is downgraded to SMS, the agent adapts gracefully. All validated by E2E tests with real media and real SMS fallback scenarios.
+The agent handles images, video, and files in both directions. The AI can send celebration effects. Tapbacks from the user are forwarded to the chat endpoint. When a message is downgraded to SMS, the agent adapts gracefully. All rich messaging scenarios are validated by unit tests replaying captured Sendblue webhook fixtures. One manual sanity check with a real phone per feature confirms the fixtures match Sendblue's actual payloads.
 
 ---
 

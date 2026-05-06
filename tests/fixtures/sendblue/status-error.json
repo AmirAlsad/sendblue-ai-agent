@@ -1,0 +1,18 @@
+{
+  "content": "hello back",
+  "is_outbound": true,
+  "status": "ERROR",
+  "error_code": "5509",
+  "error_message": "Rate limit window exceeded",
+  "error_detail": "Reduce send frequency or wait for the current window to reset",
+  "message_handle": "outbound-error-001",
+  "from_number": "+15552220000",
+  "to_number": "+15551110001",
+  "was_downgraded": true,
+  "media_url": "",
+  "message_type": "message",
+  "group_id": "",
+  "participants": [],
+  "send_style": "",
+  "service": "SMS"
+}

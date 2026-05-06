@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.captures/
+.env
+.env.local
+.env.e2e
+.DS_Store
+*.log

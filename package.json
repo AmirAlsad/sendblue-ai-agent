@@ -1,0 +1,52 @@
+{
+  "name": "sendblue-ai-agent",
+  "version": "0.1.0",
+  "description": "Messaging infrastructure for deploying AI agents over iMessage with Sendblue.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "node --import tsx src/index.ts",
+    "start": "node dist/index.js",
+    "setup:e2e": "node --import tsx scripts/e2e/setup.ts",
+    "verify:e2e": "node --import tsx scripts/e2e/verify.ts",
+    "dev:e2e": "node --import tsx scripts/e2e/dev.ts",
+    "sendblue:webhooks": "node --import tsx scripts/e2e/sendblue-webhooks.ts",
+    "capture:fixtures": "node --import tsx scripts/e2e/capture-fixtures.ts",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "vitest run --config vitest.config.ts tests/unit",
+    "test:integration": "vitest run --config vitest.config.ts tests/integration",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts tests/e2e",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "sendblue",
+    "imessage",
+    "ai-agent",
+    "webhook",
+    "messaging"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "node-mocks-http": "^1.16.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

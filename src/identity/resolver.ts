@@ -20,7 +20,8 @@ function normalizeIdentity(payload: unknown): ConversationIdentity | null {
 
   return {
     userId: record.userId,
-    data: record.data
+    data: record.data,
+    authorized: typeof record.authorized === 'boolean' ? record.authorized : undefined
   };
 }
 

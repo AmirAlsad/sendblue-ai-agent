@@ -35,10 +35,11 @@ direct:{sendblueLine}:{phoneNumber}
 `sendblueLine` comes from `sendblue_number`, then `to_number`, then
 `SENDBLUE_FROM_NUMBER`. The sender phone number comes from `from_number`.
 
-Groups are intentionally silent in v0.2. If `group_id` is present or
-`message_type` is `group`, the webhook is acknowledged and deduped, metadata is
-available in logs/parser output, and no chat endpoint call or Sendblue reply is
-made. Group routing belongs to the v0.4 design.
+Groups are address-gated. If `group_id` is present or `message_type` is
+`group`, the webhook is acknowledged and deduped. Unaddressed group messages
+preserve metadata and stay silent. Addressed groups route only when the message
+mentions `AGENT_DISPLAY_NAME`, references a known agent outbound, or future
+payloads include explicit reply metadata for the agent.
 
 `/webhook/status` tracks Sendblue outbound lifecycle statuses and advances
 ordered delivery queues when the current message reaches the expected
@@ -70,12 +71,15 @@ configured, webhook secret validation is skipped.
 - `SENDBLUE_WEBHOOK_SECRET_HEADER` - additional accepted secret header name.
 - `DEDUPE_TTL_SECONDS` - dedupe window for inbound `message_handle` values.
 - `INBOUND_TYPING_STATE_ENABLED` - controls whether typing webhooks update conversation state.
+- `AGENT_DISPLAY_NAME` - name used to detect addressed group messages.
+- `VALID_USER_REQUIRED` - silently acknowledges unauthorized invokers when enabled.
 
 ## Known limitations
 
 - Sendblue has no local inbound simulator, so captured real webhooks remain
   important for validating payload shape changes.
-- Group messages are not routed to chat or replied to in v0.2.
+- Group routing is address-gated and beta Sendblue group delivery still needs
+  real-line validation.
 - Operational webhook handlers currently preserve/log payloads but do not
   trigger product behavior beyond typing state.
 - `READ` and `RECEIVED` are not accepted as outbound status callback statuses;

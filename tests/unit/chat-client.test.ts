@@ -6,15 +6,20 @@ import { loadFixture } from '../helpers/fixtures.js';
 
 describe('chat endpoint contract', () => {
   it('normalizes single-message, multi-message, and silence responses', () => {
-    expect(normalizeChatResponse({ message: 'hello' })).toEqual({ messages: ['hello'] });
-    expect(normalizeChatResponse({ messages: ['one', '', 'two'] })).toEqual({
-      messages: ['one', 'two']
+    expect(normalizeChatResponse({ message: 'hello' })).toEqual({
+      actions: [{ type: 'message', content: 'hello' }]
     });
-    expect(normalizeChatResponse({ silence: true })).toEqual({ silence: true });
+    expect(normalizeChatResponse({ messages: ['one', '', 'two'] })).toEqual({
+      actions: [
+        { type: 'message', content: 'one' },
+        { type: 'message', content: 'two' }
+      ]
+    });
+    expect(normalizeChatResponse({ silence: true })).toEqual({ silence: true, actions: [] });
   });
 
   it('rejects malformed chat responses', () => {
-    expect(() => normalizeChatResponse({ ok: true })).toThrow(/message, messages, or silence/);
+    expect(() => normalizeChatResponse({ ok: true })).toThrow(/message, messages, actions, or silence/);
   });
 
   it('includes Sendblue metadata and downgrade state in requests', () => {

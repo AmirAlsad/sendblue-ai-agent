@@ -74,7 +74,44 @@ Useful prompts to send from the device:
 - `human` returns a handoff-style reply.
 - Any other input returns one reply that uses the v0.2 request context.
 
-## Run All Three Locally
+## Rich Actions Chat Endpoint
+
+Use this with a rich-capable runtime when you want the chat endpoint to return
+structured Sendblue actions instead of plain strings.
+
+```bash
+node examples/rich-actions-chat-endpoint/server.js
+```
+
+Then set:
+
+```bash
+CHAT_ENDPOINT_URL=http://localhost:4004/chat
+```
+
+Useful prompts to send from the device:
+
+- `multi` returns two ordered `{ type: "message" }` actions.
+- `silence` returns a rich `{ type: "silence" }` action.
+- `reaction` returns a love reaction targeting the latest inbound message, or
+  a plain fallback if the conversation is SMS/downgraded.
+- `reply` returns a contextual reply action targeting the latest inbound
+  message.
+- `media` returns a hosted media message using `HOSTED_MEDIA_BASE_URL`.
+- `effect` returns a message with `sendStyle: "celebration"`, or a plain
+  fallback if the conversation is SMS/downgraded.
+- `receipt` returns a normal message; read receipts are controlled by
+  `READ_RECEIPTS_ENABLED` in the agent, not by chat actions.
+- `typing` returns a normal message; typing refreshes are controlled by the
+  agent while the chat request and outbound queue are active.
+- `sb-agent group` returns a group reply only when the inbound request has group
+  metadata and mentions `AGENT_DISPLAY_NAME`.
+
+Set `CHAT_ENDPOINT_URL=http://localhost:4004/chat?mode=xml` to return XML-style
+Sendblue tags in the legacy top-level `message` field. The XML mode demonstrates
+multi-message tags, media, send effects, reactions, replies, and silence.
+
+## Run Examples Locally
 
 Use separate terminals:
 
@@ -82,8 +119,8 @@ Use separate terminals:
 node examples/minimal-chat-endpoint/server.js
 node examples/identity-lookup/server.js
 node examples/v02-rich-chat-endpoint/server.js
+node examples/rich-actions-chat-endpoint/server.js
 ```
 
 Only one chat endpoint should be assigned to `CHAT_ENDPOINT_URL` at a time. The
 identity lookup service can run alongside either chat endpoint.
-

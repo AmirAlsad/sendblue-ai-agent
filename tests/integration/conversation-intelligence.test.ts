@@ -6,7 +6,11 @@ import { createApp } from '../../src/http/app.js';
 import type { IdentityResolver } from '../../src/identity/resolver.js';
 import type { SendblueClient } from '../../src/sendblue/client.js';
 import type {
+  SendblueActionResult,
+  SendblueMarkReadRequest,
+  SendblueOutboundGroupMessage,
   SendblueOutboundMessage,
+  SendblueReactionRequest,
   SendblueSendResult,
   SendblueTypingIndicator,
   SendblueTypingIndicatorResult
@@ -27,11 +31,29 @@ class QueueChatClient implements ChatClient {
 
 class FakeSendblueClient implements SendblueClient {
   calls: SendblueOutboundMessage[] = [];
+  groupCalls: SendblueOutboundGroupMessage[] = [];
+  reactionCalls: SendblueReactionRequest[] = [];
+  readCalls: SendblueMarkReadRequest[] = [];
   typingCalls: SendblueTypingIndicator[] = [];
 
   async sendMessage(message: SendblueOutboundMessage): Promise<SendblueSendResult> {
     this.calls.push(message);
     return { messageHandle: `sent-${this.calls.length}`, raw: { ok: true } };
+  }
+
+  async sendGroupMessage(message: SendblueOutboundGroupMessage): Promise<SendblueSendResult> {
+    this.groupCalls.push(message);
+    return { messageHandle: `group-${message.groupId}`, raw: { ok: true } };
+  }
+
+  async sendReaction(reaction: SendblueReactionRequest): Promise<SendblueActionResult> {
+    this.reactionCalls.push(reaction);
+    return { status: 'OK', reaction: reaction.reaction, raw: { ok: true } };
+  }
+
+  async markRead(receipt: SendblueMarkReadRequest): Promise<SendblueActionResult> {
+    this.readCalls.push(receipt);
+    return { status: 'OK', number: receipt.toNumber, raw: { ok: true } };
   }
 
   async sendTypingIndicator(indicator: SendblueTypingIndicator): Promise<SendblueTypingIndicatorResult> {
@@ -236,5 +258,220 @@ describe('conversation intelligence', () => {
 
     expect(chatClient.calls[0].identity).toEqual({ userId: 'user-123', data: { plan: 'pro' } });
     expect(chatClient.calls[1].identity).toBeNull();
+  });
+
+  it('sends direct read receipts before chat and refreshes typing until final delivery', async () => {
+    await close();
+    const refreshedConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      readReceiptsEnabled: true,
+      typingRefreshIntervalMs: 10,
+      typingRefreshMaxMs: 100,
+      outboundDeliveryTimeoutMs: 5000
+    });
+    const created = createApp({
+      config: refreshedConfig,
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+
+    chatClient.responses.push({ messages: ['done'] });
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [refreshedConfig.sendblueWebhookSecretHeader]: refreshedConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'read-typing-1' })
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.readCalls).toEqual([{ toNumber: '+15551110001' }]);
+    expect(chatClient.calls).toHaveLength(1);
+    expect(sendblueClient.typingCalls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(20);
+    expect(sendblueClient.typingCalls.length).toBeGreaterThan(1);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [refreshedConfig.sendblueWebhookSecretHeader]: refreshedConfig.sendblueWebhookSecret! },
+      body: { message_handle: 'sent-1', status: 'DELIVERED', service: 'iMessage' }
+    });
+    const stoppedAt = sendblueClient.typingCalls.length;
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect(sendblueClient.typingCalls).toHaveLength(stoppedAt);
+  });
+
+  it('keeps non-invoked groups silent and routes addressed group mentions', async () => {
+    chatClient.responses.push({
+      actions: [
+        {
+          type: 'media',
+          content: 'group image',
+          mediaUrl: 'https://cdn.example.test/group.png',
+          sendStyle: 'balloons'
+        }
+      ]
+    });
+
+    const silent = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-silent-1',
+        content: 'talking to the group',
+        group_id: 'group-1',
+        group_display_name: 'Planning',
+        message_type: 'group',
+        participants: ['+15551110001', '+15551110002']
+      })
+    });
+
+    expect(silent.body).toMatchObject({
+      ok: true,
+      group: true,
+      conversationKey: 'group:+15552220000:group-1',
+      accepted: false
+    });
+    expect(chatClient.calls).toHaveLength(0);
+    expect(sendblueClient.groupCalls).toHaveLength(0);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-invoked-1',
+        content: '@sb-agent send the photo',
+        group_id: 'group-1',
+        group_display_name: 'Planning',
+        message_type: 'group',
+        participants: ['+15551110001', '+15551110002']
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(chatClient.calls[0].conversation).toMatchObject({
+      key: 'group:+15552220000:group-1',
+      type: 'group',
+      groupId: 'group-1'
+    });
+    expect(sendblueClient.groupCalls).toEqual([
+      {
+        groupId: 'group-1',
+        content: 'group image',
+        mediaUrl: 'https://cdn.example.test/group.png',
+        sendStyle: 'balloons',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      }
+    ]);
+  });
+
+  it('resolves reaction targets to inbound message handles and continues the queue', async () => {
+    chatClient.responses.push({
+      actions: [
+        { type: 'reaction', reaction: 'love', target: { alias: 'last' } },
+        { type: 'message', content: 'after reaction' }
+      ]
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'react-target-1' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sendblueClient.reactionCalls).toEqual([{ messageHandle: 'react-target-1', reaction: 'love' }]);
+    expect(sendblueClient.calls.map(call => call.content)).toEqual(['after reaction']);
+  });
+
+  it('treats group replies or tapbacks to known agent outbound handles as addressed', async () => {
+    chatClient.responses.push({ actions: [{ type: 'message', content: 'seed group reply' }] }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-seed-1',
+        content: '@sb-agent seed',
+        group_id: 'group-known',
+        message_type: 'group'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.groupCalls).toHaveLength(1);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: { message_handle: 'group-group-known', status: 'DELIVERED', service: 'iMessage' }
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({
+        message_handle: 'group-known-reply-1',
+        content: 'Reacted love to seed group reply',
+        group_id: 'group-known',
+        message_type: 'group',
+        target_message_handle: 'group-group-known'
+      })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(chatClient.calls).toHaveLength(2);
+    expect(chatClient.calls[1].conversation).toMatchObject({
+      key: 'group:+15552220000:group-known',
+      type: 'group'
+    });
+  });
+
+  it('does not call chat when VALID_USER_REQUIRED rejects the resolved identity', async () => {
+    const resolver: IdentityResolver = {
+      resolveByPhone: vi.fn().mockResolvedValue({ userId: 'blocked-user', authorized: false })
+    };
+    await close();
+    const gatedConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      validUserRequired: true
+    });
+    const created = createApp({
+      config: gatedConfig,
+      chatClient,
+      sendblueClient,
+      identityResolver: resolver,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [gatedConfig.sendblueWebhookSecretHeader]: gatedConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'blocked-identity-1' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(chatClient.calls).toHaveLength(0);
+    expect(sendblueClient.calls).toHaveLength(0);
   });
 });

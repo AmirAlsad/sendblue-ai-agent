@@ -79,15 +79,35 @@ Optional identity and typing:
 - `OUTBOUND_TYPING_INDICATORS_ENABLED` - sends best-effort Sendblue typing indicators for direct iMessage conversations, default `true`.
 - `INBOUND_TYPING_STATE_ENABLED` - stores inbound typing webhooks for inclusion in the next chat request, default `true`.
 
+Optional rich actions:
+
+- `CHAT_RESPONSE_PARSE_TAGS` - parses supported XML-style tags from legacy string responses into rich actions, default `true`.
+- `CHAT_RESPONSE_MESSAGE_TAG` - message tag name, default `message`.
+- `CHAT_RESPONSE_NO_RESPONSE_TAG` - silence tag name, default `no_response`.
+- `CHAT_RESPONSE_REACTION_TAG` - reaction tag name, default `reaction`.
+- `CHAT_RESPONSE_REPLY_TAG` - reply tag name, default `reply`.
+- `READ_RECEIPTS_ENABLED` - allows direct iMessage/RCS read receipts after Sendblue support is confirmed for the deployed line, default `false`.
+- `READ_RECEIPT_DEBOUNCE_MS` - read receipt debounce before chat processing, default `250`.
+- `TYPING_REFRESH_INTERVAL_MS` - refresh interval for repeated outbound typing indicators while a long-running response is in progress, default `5000`.
+- `TYPING_REFRESH_MAX_MS` - maximum typing refresh duration, default `120000`.
+
+Optional group routing:
+
+- `AGENT_DISPLAY_NAME` - name that marks a group message as addressed to the agent, default `sb-agent`.
+- `VALID_USER_REQUIRED` - silently acknowledges null or unauthorized identities, including the invoking participant in groups, default `false`.
+
 Boolean values are enabled by `1`, `true`, `yes`, or `on` case-insensitively.
 Other values are treated as false when the variable is present.
 
 ## Known limitations
 
 - `.env.example` currently focuses on base runtime and E2E values; keep it,
-  README, and this document in sync as v0.2 tunables are promoted there.
+  README, and this document in sync as tunables are promoted there.
 - In-memory state is suitable for tests and local experiments only.
 - Webhook secret validation is shared across receive, status, typing, and
   operational webhook routes. The header name remains configurable because
   Sendblue's secret-header behavior should be confirmed from real captures
   before enforcing production policy.
+- Rich action env vars should remain opt-in until real-device E2E verifies
+  Sendblue behavior for the deployed line, especially read receipts, reactions,
+  replies, and group routing.

@@ -1,3 +1,5 @@
+import { DEFAULT_CHAT_RESPONSE_TAGS, type ChatResponseTagNames } from '../chat/types.js';
+
 export type AgentConfig = {
   port: number;
   publicBaseUrl: string;
@@ -5,6 +7,7 @@ export type AgentConfig = {
   sendblueApiKeyId: string;
   sendblueApiSecretKey: string;
   sendblueApiBaseUrl: string;
+  sendblueApiV2BaseUrl: string;
   sendblueFromNumber: string;
   sendblueWebhookSecret?: string;
   sendblueWebhookSecretHeader: string;
@@ -23,6 +26,14 @@ export type AgentConfig = {
   userLookupUrl?: string;
   outboundTypingIndicatorsEnabled: boolean;
   inboundTypingStateEnabled: boolean;
+  readReceiptsEnabled: boolean;
+  readReceiptDebounceMs: number;
+  typingRefreshIntervalMs: number;
+  typingRefreshMaxMs: number;
+  agentDisplayName: string;
+  validUserRequired: boolean;
+  chatResponseParseTags: boolean;
+  chatResponseTags: ChatResponseTagNames;
 };
 
 export type ConfigEnv = Record<string, string | undefined>;
@@ -61,6 +72,18 @@ function optionalBoolean(env: ConfigEnv, name: string, fallback: boolean): boole
   return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
 }
 
+function optionalString(env: ConfigEnv, name: string): string | undefined {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  return raw;
+}
+
+function optionalTagName(env: ConfigEnv, name: string, fallback: string): string {
+  const raw = env[name];
+  if (!raw || raw.trim() === '') return fallback;
+  return raw.trim().replace(/^<\/?/, '').replace(/\/?>$/, '');
+}
+
 export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
   return {
     port: optionalInt(env, 'PORT', 3000),
@@ -69,6 +92,7 @@ export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
     sendblueApiKeyId: requireEnv(env, 'SENDBLUE_API_KEY_ID'),
     sendblueApiSecretKey: requireEnv(env, 'SENDBLUE_API_SECRET_KEY'),
     sendblueApiBaseUrl: (env.SENDBLUE_API_BASE_URL || 'https://api.sendblue.co').replace(/\/+$/, ''),
+    sendblueApiV2BaseUrl: (env.SENDBLUE_API_V2_BASE_URL || 'https://api.sendblue.com').replace(/\/+$/, ''),
     sendblueFromNumber: requireEnv(env, 'SENDBLUE_FROM_NUMBER'),
     sendblueWebhookSecret: env.SENDBLUE_WEBHOOK_SECRET || undefined,
     sendblueWebhookSecretHeader:
@@ -87,6 +111,19 @@ export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
     outboundDeliveryTimeoutMs: optionalInt(env, 'OUTBOUND_DELIVERY_TIMEOUT_MS', 30000),
     userLookupUrl: env.USER_LOOKUP_URL || undefined,
     outboundTypingIndicatorsEnabled: optionalBoolean(env, 'OUTBOUND_TYPING_INDICATORS_ENABLED', true),
-    inboundTypingStateEnabled: optionalBoolean(env, 'INBOUND_TYPING_STATE_ENABLED', true)
+    inboundTypingStateEnabled: optionalBoolean(env, 'INBOUND_TYPING_STATE_ENABLED', true),
+    readReceiptsEnabled: optionalBoolean(env, 'READ_RECEIPTS_ENABLED', false),
+    readReceiptDebounceMs: optionalInt(env, 'READ_RECEIPT_DEBOUNCE_MS', 250),
+    typingRefreshIntervalMs: optionalInt(env, 'TYPING_REFRESH_INTERVAL_MS', 5000),
+    typingRefreshMaxMs: optionalInt(env, 'TYPING_REFRESH_MAX_MS', 120000),
+    agentDisplayName: optionalString(env, 'AGENT_DISPLAY_NAME') ?? 'sb-agent',
+    validUserRequired: optionalBoolean(env, 'VALID_USER_REQUIRED', false),
+    chatResponseParseTags: optionalBoolean(env, 'CHAT_RESPONSE_PARSE_TAGS', true),
+    chatResponseTags: {
+      message: optionalTagName(env, 'CHAT_RESPONSE_MESSAGE_TAG', DEFAULT_CHAT_RESPONSE_TAGS.message),
+      noResponse: optionalTagName(env, 'CHAT_RESPONSE_NO_RESPONSE_TAG', DEFAULT_CHAT_RESPONSE_TAGS.noResponse),
+      reaction: optionalTagName(env, 'CHAT_RESPONSE_REACTION_TAG', DEFAULT_CHAT_RESPONSE_TAGS.reaction),
+      reply: optionalTagName(env, 'CHAT_RESPONSE_REPLY_TAG', DEFAULT_CHAT_RESPONSE_TAGS.reply)
+    }
   };
 }

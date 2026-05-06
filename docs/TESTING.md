@@ -128,6 +128,33 @@ Messages Automation prompt for `osascript`.
 The E2E test is intentionally not part of `npm test` because it sends real
 messages and depends on external services.
 
+## Rich Capability Scenarios
+
+Rich action scenario placeholders live under `tests/e2e` so they run only when
+`npm run test:e2e` is selected. Hardware-free placeholders should document the
+expected sequence and safety gates before a scenario is promoted to live
+Sendblue coverage.
+
+Promote a scenario to real-device E2E only after confirming these expectations:
+
+- Hosted media actions use an HTTPS `mediaUrl` that Sendblue can fetch and
+  Messages.app can display.
+- Send effects use `sendStyle` only on direct iMessage conversations and degrade
+  to plain text on SMS or downgraded conversations.
+- Reactions and replies target a captured message identifier or documented
+  Sendblue selector; missing targets must not send duplicate plain messages.
+- Read receipts are gated by `READ_RECEIPTS_ENABLED` until observed
+  Sendblue behavior is captured.
+- Typing refreshes stop after response completion, SMS downgrade, interruption,
+  or terminal delivery status.
+- Group replies are sent only when the inbound group message is addressed to
+  `AGENT_DISPLAY_NAME`, references a known agent outbound, or future payloads
+  include explicit reply metadata for the agent.
+
+Use `examples/rich-actions-chat-endpoint` as the deterministic chat endpoint
+when manually exercising `actions[]` or XML tag compatibility in a rich-capable
+runtime.
+
 ## Captured Fixtures
 
 Synthetic fixtures live in `tests/fixtures/sendblue`. Use:

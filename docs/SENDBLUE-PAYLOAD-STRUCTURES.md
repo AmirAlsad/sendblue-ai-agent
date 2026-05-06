@@ -94,6 +94,10 @@ Messages sent with iMessage effects arrived as plain receive payloads:
 The outbound API supports `send_style`, but the observed inbound effect captures
 did not preserve the sender's effect in that field.
 
+For outbound rich actions, treat `sendStyle` as an iMessage-only hint. Real
+device E2E should verify every style before documenting it as supported by this
+package.
+
 ## Groups
 
 Observed group messages were distinguishable by:
@@ -106,6 +110,10 @@ Observed group messages were distinguishable by:
 The group display name was empty in the observed capture. Use `group_id` as the
 stable correlation field and treat display name as optional.
 
+Group receives should stay silent unless addressed group routing is enabled.
+When routed, preserve `group_id`, `participants`, and `group_display_name` in
+the chat request so the endpoint can decide whether to answer.
+
 ## SMS-Originated Messages
 
 The SMS capture was sent as SMS from the start, not as a failed iMessage
@@ -117,6 +125,9 @@ downgrade. Its observed shape was:
 
 Runtime channel detection should therefore treat `service: "SMS"` as SMS even
 when `was_downgraded` is not `true`.
+
+Rich actions that depend on iMessage behavior should be suppressed for this
+shape: reactions, replies, read receipts, typing refreshes, and send effects.
 
 ## Operational Webhook Types
 

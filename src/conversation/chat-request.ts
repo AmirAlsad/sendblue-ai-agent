@@ -14,7 +14,7 @@ export function createBufferedChatRequest(state: ConversationRecord): ChatEndpoi
     fromNumber: state.phoneNumber,
     toNumber: state.lineNumber,
     messageHandle: first?.messageHandle ?? '',
-    channel: state.channel === 'rcs' ? 'unknown' : state.channel,
+    channel: state.channel,
     messages: state.inboundBuffer.map(item => ({
       content: item.content,
       fromNumber: item.fromNumber,
@@ -28,9 +28,12 @@ export function createBufferedChatRequest(state: ConversationRecord): ChatEndpoi
     })),
     conversation: {
       key: state.key,
-      type: 'direct',
+      type: state.type,
       lineNumber: state.lineNumber,
-      phoneNumber: state.phoneNumber,
+      phoneNumber: state.type === 'direct' ? state.phoneNumber : undefined,
+      groupId: state.groupId,
+      groupDisplayName: state.groupDisplayName,
+      participants: state.participants,
       channel: state.channel,
       smsDowngraded: state.smsDowngraded,
       state: state.state
@@ -47,9 +50,9 @@ export function createBufferedChatRequest(state: ConversationRecord): ChatEndpoi
       wasDowngraded: first?.wasDowngraded ?? state.smsDowngraded,
       service: first?.service,
       mediaUrl: first?.mediaUrl,
-      groupId: null,
-      groupDisplayName: null,
-      participants: undefined,
+      groupId: state.groupId ?? null,
+      groupDisplayName: state.groupDisplayName ?? null,
+      participants: state.participants,
       sendStyle: first?.sendStyle,
       messageType: first?.messageType,
       raw: first?.raw ?? {}

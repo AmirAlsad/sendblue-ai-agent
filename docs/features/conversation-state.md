@@ -99,6 +99,34 @@ The chat endpoint can reply in any of these backward-compatible forms:
 Empty strings are ignored inside `messages`. `{ "silence": true }` produces no
 Sendblue call.
 
+Rich capability builds add a preferred `actions[]` response contract for
+transport features that cannot be represented as plain strings:
+
+```json
+{
+  "actions": [
+    { "type": "message", "content": "First ordered reply." },
+    {
+      "type": "message",
+      "content": "Photo caption.",
+      "mediaUrl": "https://cdn.example.com/photo.png",
+      "sendStyle": "celebration"
+    },
+    { "type": "reaction", "reaction": "love", "target": { "alias": "latest" } },
+    {
+      "type": "reply",
+      "content": "Replying directly.",
+      "target": { "messageHandle": "recv-123" }
+    }
+  ]
+}
+```
+
+The rich contract is documented in
+[`docs/features/rich-chat-actions.md`](rich-chat-actions.md). Legacy `message`
+and `messages` responses should normalize to ordered message actions, while
+`silence` should remain an explicit no-op.
+
 ## Code files
 
 | File | Role |
@@ -108,6 +136,7 @@ Sendblue call.
 | `src/conversation/agent.ts` | Channel transitions, state transitions, response handling |
 | `src/chat/types.ts` | Public chat request/response types |
 | `src/chat/client.ts` | HTTP chat client and response normalization |
+| `docs/features/rich-chat-actions.md` | Rich `actions[]` and XML compatibility contract |
 
 ## Configuration
 
@@ -118,12 +147,19 @@ Sendblue call.
 - `MAX_REPROCESS_ATTEMPTS`
 - `OUTBOUND_TYPING_INDICATORS_ENABLED`
 - `INBOUND_TYPING_STATE_ENABLED`
+- `CHAT_RESPONSE_PARSE_TAGS`
+- `READ_RECEIPTS_ENABLED`
+- `READ_RECEIPT_DEBOUNCE_MS`
+- `TYPING_REFRESH_INTERVAL_MS`
+- `TYPING_REFRESH_MAX_MS`
+- `AGENT_DISPLAY_NAME`
+- `VALID_USER_REQUIRED`
 
 ## Known limitations
 
-- Group conversation records and group chat contracts are intentionally absent
-  in v0.2.
+- Group conversation records are present for addressed inbound groups. Unaddressed
+  groups are still deduped, logged, metadata-preserved, and silent.
 - `cancelledMessages` are tracked in state for interruptions but are not yet
   included in the public chat request.
-- The top-level `channel` field only exposes `imessage`, `sms`, or `unknown`;
-  use `conversation.channel` or `messages[].channel` for `rcs`.
+- The top-level `channel`, `conversation.channel`, and `messages[].channel`
+  can expose `imessage`, `sms`, `rcs`, or `unknown`.

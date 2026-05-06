@@ -1,24 +1,126 @@
-import type { SendblueReceiveWebhook } from '../sendblue/types.js';
+import type {
+  SendblueReaction,
+  SendblueReceiveWebhook,
+  SendblueSendStyle
+} from '../sendblue/types.js';
+
+export type ChatResponseTagNames = {
+  message: string;
+  noResponse: string;
+  reaction: string;
+  reply: string;
+};
+
+export const DEFAULT_CHAT_RESPONSE_TAGS: ChatResponseTagNames = {
+  message: 'message',
+  noResponse: 'no_response',
+  reaction: 'reaction',
+  reply: 'reply'
+};
+
+export type TargetRef =
+  | { messageHandle: string; partIndex?: number }
+  | { alias: 'latest' | 'previous' | 'first' | 'last' | (string & {}); partIndex?: number }
+  | { contentIncludes: string; occurrence?: 'first' | 'last'; partIndex?: number }
+  | { content: string; partIndex?: number }
+  | { partIndex: number };
+
+export type ChatMessageAction = {
+  type: 'message';
+  content: string;
+  mediaUrl?: string;
+  sendStyle?: SendblueSendStyle;
+};
+
+export type ChatMediaAction = {
+  type: 'media';
+  mediaUrl: string;
+  content?: string;
+  sendStyle?: SendblueSendStyle;
+};
+
+export type ChatReplyAction = {
+  type: 'reply';
+  target: TargetRef;
+  content: string;
+  mediaUrl?: string;
+  sendStyle?: SendblueSendStyle;
+};
+
+export type ChatReactionAction = {
+  type: 'reaction';
+  reaction: SendblueReaction;
+  target: TargetRef;
+};
+
+export type ChatSilenceAction = {
+  type: 'silence';
+};
+
+export type ChatAction =
+  | ChatMessageAction
+  | ChatMediaAction
+  | ChatReplyAction
+  | ChatReactionAction
+  | ChatSilenceAction;
+
+export type ChatContractWarning = {
+  code: string;
+  message: string;
+  path?: string;
+};
+
+export type NormalizedChatEndpointResponse =
+  | {
+      actions: ChatAction[];
+      silence?: false;
+      warnings?: ChatContractWarning[];
+    }
+  | {
+      actions: [];
+      silence: true;
+      warnings?: ChatContractWarning[];
+    };
+
+export type LegacyChatEndpointResponse =
+  | { message: string; silence?: false }
+  | { messages: string[]; silence?: false }
+  | { silence: true };
+
+export type ActionChatEndpointResponse = {
+  actions: ChatAction[];
+  silence?: false;
+  warnings?: ChatContractWarning[];
+};
 
 export type ChatEndpointRequest = {
   message: string;
   fromNumber: string;
   toNumber: string;
   messageHandle: string;
-  channel: 'imessage' | 'sms' | 'unknown';
+  channel: 'imessage' | 'sms' | 'rcs' | 'unknown';
   messages?: ChatEndpointMessage[];
   conversation?: {
     key: string;
-    type: 'direct';
+    type: 'direct' | 'group';
     lineNumber: string;
-    phoneNumber: string;
+    phoneNumber?: string;
+    groupId?: string | null;
+    groupDisplayName?: string | null;
+    participants?: unknown;
     channel: 'imessage' | 'sms' | 'rcs' | 'unknown';
     smsDowngraded: boolean;
     state: string;
+    invocation?: {
+      reason: 'direct' | 'name' | 'reaction' | 'reply';
+      agentName?: string;
+      targetMessageHandle?: string;
+    };
   };
   identity?: {
     userId: string;
     data?: unknown;
+    authorized?: boolean;
   } | null;
   typing?: {
     isTyping: boolean;
@@ -52,8 +154,9 @@ export type ChatEndpointMessage = {
 };
 
 export type ChatEndpointResponse =
-  | { silence: true }
-  | { messages: string[]; silence?: false };
+  | LegacyChatEndpointResponse
+  | ActionChatEndpointResponse
+  | NormalizedChatEndpointResponse;
 
 export function createChatRequest(webhook: SendblueReceiveWebhook): ChatEndpointRequest {
   return {
@@ -65,9 +168,11 @@ export function createChatRequest(webhook: SendblueReceiveWebhook): ChatEndpoint
       ? 'sms'
       : webhook.service === 'SMS'
         ? 'sms'
-        : webhook.service === 'iMessage'
-          ? 'imessage'
-          : 'unknown',
+        : webhook.service === 'RCS'
+          ? 'rcs'
+          : webhook.service === 'iMessage'
+            ? 'imessage'
+            : 'unknown',
     sendblue: {
       wasDowngraded: webhook.wasDowngraded === true,
       service: webhook.service,

@@ -6,6 +6,7 @@ export function testConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
     publicBaseUrl: 'https://agent.example.test',
     chatEndpointUrl: 'https://chat.example.test/chat',
     sendblueApiBaseUrl: 'https://api.sendblue.example.test',
+    sendblueApiV2BaseUrl: 'https://api-v2.sendblue.example.test',
     sendblueApiKeyId: 'test-key-id',
     sendblueApiSecretKey: 'test-secret-key',
     sendblueFromNumber: '+15552220000',
@@ -26,6 +27,19 @@ export function testConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
     userLookupUrl: undefined,
     outboundTypingIndicatorsEnabled: true,
     inboundTypingStateEnabled: true,
+    readReceiptsEnabled: false,
+    readReceiptDebounceMs: 0,
+    typingRefreshIntervalMs: 0,
+    typingRefreshMaxMs: 0,
+    agentDisplayName: 'sb-agent',
+    validUserRequired: false,
+    chatResponseParseTags: true,
+    chatResponseTags: {
+      message: 'message',
+      noResponse: 'no_response',
+      reaction: 'reaction',
+      reply: 'reply'
+    },
     ...overrides
   };
 }

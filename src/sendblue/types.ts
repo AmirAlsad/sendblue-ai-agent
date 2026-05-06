@@ -13,6 +13,35 @@ export type SendblueStatus = (typeof SENDBLUE_STATUSES)[number];
 
 export type SendblueReceiveStatus = SendblueStatus | 'RECEIVED';
 
+export const SENDBLUE_SEND_STYLES = [
+  'celebration',
+  'shooting_star',
+  'fireworks',
+  'lasers',
+  'love',
+  'confetti',
+  'balloons',
+  'spotlight',
+  'echo',
+  'invisible',
+  'gentle',
+  'loud',
+  'slam'
+] as const;
+
+export type SendblueSendStyle = (typeof SENDBLUE_SEND_STYLES)[number];
+
+export const SENDBLUE_REACTIONS = [
+  'love',
+  'like',
+  'dislike',
+  'laugh',
+  'emphasize',
+  'question'
+] as const;
+
+export type SendblueReaction = (typeof SENDBLUE_REACTIONS)[number];
+
 export const SENDBLUE_ERROR_CODES = [
   '4000',
   '4001',
@@ -71,6 +100,26 @@ export type SendblueOutboundMessage = {
   toNumber: string;
   content: string;
   statusCallback: string;
+  mediaUrl?: string;
+  sendStyle?: SendblueSendStyle;
+};
+
+export type SendblueOutboundGroupMessage = {
+  groupId: string;
+  content: string;
+  statusCallback?: string;
+  mediaUrl?: string;
+  sendStyle?: SendblueSendStyle;
+};
+
+export type SendblueReactionRequest = {
+  messageHandle: string;
+  reaction: SendblueReaction;
+  partIndex?: number;
+};
+
+export type SendblueMarkReadRequest = {
+  toNumber: string;
 };
 
 export type SendblueTypingIndicator = {
@@ -85,5 +134,16 @@ export type SendblueTypingIndicatorResult = {
 
 export type SendblueSendResult = {
   messageHandle?: string;
+  raw: unknown;
+};
+
+export type SendblueActionResult = {
+  status?: string;
+  message?: string;
+  errorCode?: string;
+  errorMessage?: string | null;
+  messageHandle?: string;
+  reaction?: string;
+  number?: string;
   raw: unknown;
 };

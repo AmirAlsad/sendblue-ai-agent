@@ -34,9 +34,17 @@ agent replies through an ordered per-conversation queue, and advances that queue
 from Sendblue status callbacks. iMessage/RCS queues advance on `DELIVERED`;
 SMS/downgraded queues advance on `SENT`.
 
+The rich capability contract keeps the v0.2 `message`, `messages`, and
+`silence` response forms, and adds `actions[]` for hosted media, send effects,
+reactions, contextual replies, silence, and addressed group replies. Read
+receipts and typing refreshes are handled by the agent around chat processing
+and ordered delivery. XML-style tags are documented as a compatibility layer for chat
+endpoints that produce tagged text instead of structured JSON.
+
 Direct conversations are keyed as `direct:{sendblueLine}:{phoneNumber}`. Group
-messages are acknowledged and deduped in v0.2, but they do not call the chat
-endpoint or send replies until group routing is designed.
+messages are silent unless the message is addressed to `AGENT_DISPLAY_NAME` or
+references a known agent outbound. Unaddressed groups continue to be
+acknowledged and deduped without calling the chat endpoint.
 
 When `REDIS_URL` is configured, state and buffer timers use Redis/BullMQ. Without
 Redis, the package uses in-memory state for local development and tests. Redis is
@@ -52,6 +60,7 @@ the production path for durable buffering, dedupe, and queue state.
 - [Typing indicators](docs/features/typing-indicators.md)
 - [Identity resolver](docs/features/identity-resolver.md)
 - [Conversation state and chat contract](docs/features/conversation-state.md)
+- [Rich chat actions](docs/features/rich-chat-actions.md)
 - [Testing infrastructure](docs/TESTING.md)
 - [Observed Sendblue payload structures](docs/SENDBLUE-PAYLOAD-STRUCTURES.md)
 
@@ -63,6 +72,9 @@ Runnable local examples live in [examples](examples/):
 - `examples/identity-lookup` - optional `USER_LOOKUP_URL` resolver.
 - `examples/v02-rich-chat-endpoint` - consumes buffered messages, conversation
   metadata, identity, typing state, and SMS downgrade state.
+- `examples/rich-actions-chat-endpoint` - demonstrates `actions[]`, XML tag
+  compatibility, silence, reactions, replies, hosted media, send effects, and
+  addressed group behavior.
 
 ## Environment
 
@@ -93,6 +105,20 @@ Optional for conversation intelligence:
 - `USER_LOOKUP_URL`
 - `OUTBOUND_TYPING_INDICATORS_ENABLED` (defaults to `true`)
 - `INBOUND_TYPING_STATE_ENABLED` (defaults to `true`)
+
+Optional for rich Sendblue actions:
+
+- `CHAT_RESPONSE_PARSE_TAGS` (defaults to `true`)
+- `CHAT_RESPONSE_MESSAGE_TAG` (defaults to `message`)
+- `CHAT_RESPONSE_NO_RESPONSE_TAG` (defaults to `no_response`)
+- `CHAT_RESPONSE_REACTION_TAG` (defaults to `reaction`)
+- `CHAT_RESPONSE_REPLY_TAG` (defaults to `reply`)
+- `READ_RECEIPTS_ENABLED` (defaults to `false`)
+- `READ_RECEIPT_DEBOUNCE_MS` (defaults to `250`)
+- `TYPING_REFRESH_INTERVAL_MS` (defaults to `5000`)
+- `TYPING_REFRESH_MAX_MS` (defaults to `120000`)
+- `AGENT_DISPLAY_NAME` (defaults to `sb-agent`)
+- `VALID_USER_REQUIRED` (defaults to `false`)
 
 Required only for E2E:
 
@@ -157,7 +183,10 @@ capture with `npm run capture:guided -- --only tapback-custom-emoji,group-messag
 Observed payload structures are summarized in `docs/SENDBLUE-PAYLOAD-STRUCTURES.md`.
 
 `test:e2e` also starts its own ngrok SDK tunnel and registers Sendblue webhooks
-unless `E2E_PUBLIC_BASE_URL` is set to an externally managed URL.
+unless `E2E_PUBLIC_BASE_URL` is set to an externally managed URL. Rich action
+scenario placeholders live behind `npm run test:e2e`; real-device promotion
+should verify hosted media delivery, send effects, reactions, replies, read
+receipts, typing refresh cancellation, and addressed group routing.
 
 The repo cannot grant macOS Full Disk Access, sign into Messages.app, approve
 Automation prompts, or create an ngrok account/token. Those one-time

@@ -5,7 +5,11 @@ import type { ChatClient } from '../../src/chat/client.js';
 import type { ChatEndpointRequest, ChatEndpointResponse } from '../../src/chat/types.js';
 import type { SendblueClient } from '../../src/sendblue/client.js';
 import type {
+  SendblueActionResult,
+  SendblueMarkReadRequest,
+  SendblueOutboundGroupMessage,
   SendblueOutboundMessage,
+  SendblueReactionRequest,
   SendblueSendResult,
   SendblueTypingIndicator,
   SendblueTypingIndicatorResult
@@ -61,6 +65,18 @@ class FakeSendblueClient implements SendblueClient {
   async sendMessage(message: SendblueOutboundMessage): Promise<SendblueSendResult> {
     this.calls.push(message);
     return { messageHandle: `sent-${this.calls.length}`, raw: { ok: true } };
+  }
+
+  async sendGroupMessage(message: SendblueOutboundGroupMessage): Promise<SendblueSendResult> {
+    return { messageHandle: `group-${message.groupId}`, raw: { ok: true } };
+  }
+
+  async sendReaction(reaction: SendblueReactionRequest): Promise<SendblueActionResult> {
+    return { status: 'OK', messageHandle: reaction.messageHandle, reaction: reaction.reaction, raw: { ok: true } };
+  }
+
+  async markRead(receipt: SendblueMarkReadRequest): Promise<SendblueActionResult> {
+    return { status: 'OK', number: receipt.toNumber, raw: { ok: true } };
   }
 
   async sendTypingIndicator(indicator: SendblueTypingIndicator): Promise<SendblueTypingIndicatorResult> {
@@ -294,7 +310,7 @@ describe('agent app flow', () => {
     });
   });
 
-  it('replays a captured group receive envelope without replying in v0.2', async () => {
+  it('replays an unaddressed captured group receive envelope without replying', async () => {
     chatClient.nextResponse = { messages: ['captured reply'] };
 
     const response = await replayCapturedEnvelope(

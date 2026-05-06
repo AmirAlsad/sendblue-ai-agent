@@ -31,6 +31,17 @@ endpoint or message delivery. SMS/downgraded conversations suppress outbound
 typing indicators because iMessage-only affordances should not be shown after
 SMS fallback.
 
+Rich `actions[]` responses can also request a typing refresh:
+
+```json
+{ "type": "typing", "refresh": true, "durationMs": 3000 }
+```
+
+Typing refreshes follow the same direct iMessage-only gate as normal outbound
+typing indicators. They should stop as soon as the response is complete, the
+conversation downgrades to SMS, a terminal send status arrives, or a newer
+inbound message interrupts the current response.
+
 ### Inbound typing
 
 Sendblue `typing_indicator` webhooks are accepted at
@@ -72,6 +83,8 @@ If no typing state is available, `typing` is `null`.
 ## Configuration
 
 - `OUTBOUND_TYPING_INDICATORS_ENABLED`
+- `TYPING_REFRESH_INTERVAL_MS`
+- `TYPING_REFRESH_MAX_MS`
 - `INBOUND_TYPING_STATE_ENABLED`
 - `SENDBLUE_API_KEY_ID`
 - `SENDBLUE_API_SECRET_KEY`
@@ -86,3 +99,5 @@ If no typing state is available, `typing` is `null`.
 - Outbound typing is best effort and currently has no retry/backoff policy.
 - The implementation assumes typing indicators are useful only for active
   iMessage direct conversations.
+- Typing refreshes are a rich action hint, not a guarantee that Sendblue or
+  Messages.app will display continuous typing.

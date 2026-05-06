@@ -6,8 +6,19 @@ import { createApp } from './http/app.js';
 
 export { loadConfig, type AgentConfig } from './config/env.js';
 export { createApp, type AppDependencies } from './http/app.js';
-export { HttpChatClient, normalizeChatResponse, ChatEndpointError } from './chat/client.js';
-export { createChatRequest, type ChatEndpointRequest, type ChatEndpointResponse } from './chat/types.js';
+export { HttpChatClient, normalizeChatResponse, parseTaggedText, ChatEndpointError } from './chat/client.js';
+export { resolveTargetRef, type TargetResolution, type TargetResolverMessage } from './chat/target-resolver.js';
+export {
+  createChatRequest,
+  DEFAULT_CHAT_RESPONSE_TAGS,
+  type ChatAction,
+  type ChatContractWarning,
+  type ChatEndpointRequest,
+  type ChatEndpointResponse,
+  type ChatResponseTagNames,
+  type NormalizedChatEndpointResponse,
+  type TargetRef
+} from './chat/types.js';
 export { HttpSendblueClient, type SendblueClient } from './sendblue/client.js';
 export { ConversationAgent } from './conversation/agent.js';
 export { calculateBufferTimeout } from './conversation/buffering.js';
@@ -25,8 +36,16 @@ export type {
   SendblueReceiveWebhook,
   SendblueStatus,
   SendblueStatusWebhook,
+  SendblueActionResult,
+  SendblueMarkReadRequest,
+  SendblueOutboundGroupMessage,
   SendblueOutboundMessage,
-  SendblueSendResult
+  SendblueReaction,
+  SendblueReactionRequest,
+  SendblueSendResult,
+  SendblueSendStyle,
+  SendblueTypingIndicator,
+  SendblueTypingIndicatorResult
 } from './sendblue/types.js';
 export { applyStatusUpdate, InMemoryStatusStore, TERMINAL_STATUSES } from './status/tracker.js';
 

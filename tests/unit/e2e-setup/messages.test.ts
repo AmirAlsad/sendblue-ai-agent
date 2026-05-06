@@ -34,7 +34,8 @@ describe('native Messages helpers', () => {
       since: Date.UTC(2026, 4, 5, 12, 0, 0)
     });
 
-    expect(sql).toContain("handle.id = '+1555''1110001'");
+    expect(sql).toContain('handle.id AS handleId');
+    expect(sql).not.toContain('handle.id =');
     expect(sql).toContain("message.text LIKE '%reply 100\\%\\_done%' ESCAPE '\\'");
     expect(sql).toContain('hex(message.attributedBody) AS attributedBodyHex');
     expect(sql).toContain('message.date >= 799675200000000000');

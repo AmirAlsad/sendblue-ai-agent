@@ -4,24 +4,16 @@ import { HttpChatClient } from '../../src/chat/client.js';
 import { HttpSendblueClient } from '../../src/sendblue/client.js';
 import { InMemoryStatusStore } from '../../src/status/tracker.js';
 import { assertEnv, mergeRuntimeEnv, readSetupEnv } from './lib/env.js';
-import { checkNgrokCommand, startNgrok, waitForNgrokPublicUrl } from './lib/ngrok.js';
+import { startNgrokTunnel } from './lib/ngrok.js';
 import { SendblueWebhookClient } from './lib/sendblue-webhooks.js';
 import { startDeterministicChatEndpoint } from './lib/local-servers.js';
 
 const env = readSetupEnv();
 assertEnv(env, 'dev');
 
-const ngrokCheck = checkNgrokCommand(env.ngrokBin);
-if (!ngrokCheck.ok) {
-  throw new Error(`ngrok CLI check failed: ${ngrokCheck.error}`);
-}
-
 const chat = await startDeterministicChatEndpoint();
-const ngrok = startNgrok(env);
-ngrok.stdout?.on('data', chunk => process.stdout.write(`[ngrok] ${chunk}`));
-ngrok.stderr?.on('data', chunk => process.stderr.write(`[ngrok] ${chunk}`));
-
-const publicBaseUrl = await waitForNgrokPublicUrl(env.ngrokApiUrl);
+const ngrok = await startNgrokTunnel(env);
+const publicBaseUrl = ngrok.publicUrl;
 const runtimeEnv = mergeRuntimeEnv(env, publicBaseUrl, chat.url);
 const config = {
   port: env.agentPort,
@@ -63,7 +55,7 @@ for (const result of webhookResults) {
 console.log('\nPress Ctrl+C to stop.');
 
 async function shutdown() {
-  ngrok.kill('SIGTERM');
+  await ngrok.close();
   await closeAgent();
   await chat.close();
 }

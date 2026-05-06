@@ -11,6 +11,7 @@ export type ChatEndpointRequest = {
     service?: string;
     mediaUrl?: string | null;
     groupId?: string | null;
+    groupDisplayName?: string | null;
     participants?: unknown;
     sendStyle?: string | null;
     messageType?: string | null;
@@ -28,12 +29,19 @@ export function createChatRequest(webhook: SendblueReceiveWebhook): ChatEndpoint
     fromNumber: webhook.fromNumber,
     toNumber: webhook.toNumber,
     messageHandle: webhook.messageHandle,
-    channel: webhook.wasDowngraded ? 'sms' : webhook.service === 'iMessage' ? 'imessage' : 'unknown',
+    channel: webhook.wasDowngraded
+      ? 'sms'
+      : webhook.service === 'SMS'
+        ? 'sms'
+        : webhook.service === 'iMessage'
+          ? 'imessage'
+          : 'unknown',
     sendblue: {
       wasDowngraded: webhook.wasDowngraded === true,
       service: webhook.service,
       mediaUrl: webhook.mediaUrl,
       groupId: webhook.groupId,
+      groupDisplayName: webhook.groupDisplayName,
       participants: webhook.participants,
       sendStyle: webhook.sendStyle,
       messageType: webhook.messageType,

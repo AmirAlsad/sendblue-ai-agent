@@ -18,6 +18,7 @@
     "dev:e2e": "node --import tsx scripts/e2e/dev.ts",
     "sendblue:webhooks": "node --import tsx scripts/e2e/sendblue-webhooks.ts",
     "capture:fixtures": "node --import tsx scripts/e2e/capture-fixtures.ts",
+    "capture:guided": "node --import tsx scripts/e2e/guided-capture.ts",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run --config vitest.config.ts tests/unit",
     "test:integration": "vitest run --config vitest.config.ts tests/integration",
@@ -37,6 +38,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@ngrok/ngrok": "^1.7.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "pino": "^9.6.0"

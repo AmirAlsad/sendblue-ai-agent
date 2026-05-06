@@ -1,0 +1,41 @@
+{
+  "headers": {
+    "content-type": "application/json",
+    "sb-signing-secret": "test-webhook-secret"
+  },
+  "body": {
+    "accountEmail": "agent@example.test",
+    "content": "Reacted 👀 to “Capture prompt [sendblue-capture:redacted:tapback-custom-emoji]”",
+    "is_outbound": false,
+    "status": "RECEIVED",
+    "error_code": null,
+    "error_message": null,
+    "error_reason": null,
+    "message_handle": "observed-tapback-custom-emoji-001",
+    "date_sent": "2026-05-06T04:00:00.000Z",
+    "date_updated": "2026-05-06T04:00:00.000Z",
+    "from_number": "+15550000001",
+    "number": "+15550000001",
+    "to_number": "+15550000002",
+    "was_downgraded": null,
+    "plan": "dedicated",
+    "media_url": "",
+    "message_type": "message",
+    "group_id": "",
+    "participants": [],
+    "send_style": "",
+    "opted_out": false,
+    "error_detail": null,
+    "sendblue_number": "+15550000002",
+    "service": "iMessage",
+    "group_display_name": ""
+  },
+  "receivedAt": "2026-05-06T04:00:01.000Z",
+  "path": "/webhook/receive",
+  "capture": {
+    "source": "guided-capture-redacted",
+    "sessionId": "redacted",
+    "scenarioId": "tapback-custom-emoji",
+    "scenarioTitle": "Tapback custom emoji"
+  }
+}

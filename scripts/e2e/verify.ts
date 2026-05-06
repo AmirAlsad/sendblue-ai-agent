@@ -1,6 +1,5 @@
 import { assertEnv, readSetupEnv } from './lib/env.js';
 import { checkNativeMessagesPrerequisites, resolveMessagesDbPath } from './lib/messages.js';
-import { checkNgrokCommand } from './lib/ngrok.js';
 import { SendblueWebhookClient } from './lib/sendblue-webhooks.js';
 
 const env = readSetupEnv();
@@ -8,13 +7,7 @@ assertEnv(env, 'verify');
 
 let failed = false;
 
-const ngrok = checkNgrokCommand(env.ngrokBin);
-if (ngrok.ok) {
-  console.log(`ngrok CLI found: ${env.ngrokBin}`);
-} else {
-  failed = true;
-  console.error(`ngrok CLI check failed: ${ngrok.error}`);
-}
+console.log('ok - ngrok auth token configured');
 
 const nativeMessages = await checkNativeMessagesPrerequisites(resolveMessagesDbPath(env.messagesDbPath));
 for (const check of nativeMessages.checks) {

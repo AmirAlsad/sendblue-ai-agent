@@ -1,6 +1,8 @@
 import {
   SENDBLUE_STATUSES,
   type SendblueReceiveWebhook,
+  type SendblueReceiveStatus,
+  type SendblueOperationalWebhook,
   type SendblueStatus,
   type SendblueStatusWebhook
 } from './types.js';
@@ -46,6 +48,13 @@ export function parseSendblueStatus(value: unknown): SendblueStatus | undefined 
     : undefined;
 }
 
+function parseReceiveStatus(value: unknown): SendblueReceiveStatus | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.toUpperCase();
+  if (normalized === 'RECEIVED') return 'RECEIVED';
+  return parseSendblueStatus(normalized);
+}
+
 export function parseReceiveWebhook(payload: unknown): SendblueReceiveWebhook {
   if (!isRecord(payload)) {
     throw new Error('Sendblue webhook payload must be an object');
@@ -57,11 +66,12 @@ export function parseReceiveWebhook(payload: unknown): SendblueReceiveWebhook {
     toNumber: readString(payload, 'to_number', { required: true })!,
     messageHandle: readString(payload, 'message_handle', { required: true })!,
     isOutbound: readBoolean(payload, 'is_outbound'),
-    status: parseSendblueStatus(payload.status),
+    status: parseReceiveStatus(payload.status),
     wasDowngraded: readNullableBoolean(payload, 'was_downgraded'),
     service: readString(payload, 'service'),
     mediaUrl: readString(payload, 'media_url') ?? null,
     groupId: readString(payload, 'group_id') ?? null,
+    groupDisplayName: readString(payload, 'group_display_name') ?? null,
     participants: payload.participants,
     sendStyle: readString(payload, 'send_style') ?? null,
     messageType: readString(payload, 'message_type') ?? null,
@@ -85,6 +95,22 @@ export function parseStatusWebhook(payload: unknown): SendblueStatusWebhook {
     errorCode: readString(payload, 'error_code'),
     errorMessage: readString(payload, 'error_message'),
     errorDetail: readString(payload, 'error_detail'),
+    raw: payload
+  };
+}
+
+export function parseOperationalWebhook(payload: unknown): SendblueOperationalWebhook {
+  if (!isRecord(payload)) {
+    throw new Error('Sendblue operational webhook payload must be an object');
+  }
+
+  return {
+    messageHandle: readString(payload, 'message_handle'),
+    fromNumber: readString(payload, 'from_number'),
+    toNumber: readString(payload, 'to_number'),
+    number: readString(payload, 'number'),
+    status: readString(payload, 'status'),
+    content: readString(payload, 'content'),
     raw: payload
   };
 }

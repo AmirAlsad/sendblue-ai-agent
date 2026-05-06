@@ -11,6 +11,8 @@ export const SENDBLUE_STATUSES = [
 
 export type SendblueStatus = (typeof SENDBLUE_STATUSES)[number];
 
+export type SendblueReceiveStatus = SendblueStatus | 'RECEIVED';
+
 export const SENDBLUE_ERROR_CODES = [
   '4000',
   '4001',
@@ -31,11 +33,12 @@ export type SendblueReceiveWebhook = {
   toNumber: string;
   messageHandle: string;
   isOutbound: boolean;
-  status?: SendblueStatus;
+  status?: SendblueReceiveStatus;
   wasDowngraded: boolean | null;
   service?: string;
   mediaUrl?: string | null;
   groupId?: string | null;
+  groupDisplayName?: string | null;
   participants?: unknown;
   sendStyle?: string | null;
   messageType?: string | null;
@@ -49,6 +52,16 @@ export type SendblueStatusWebhook = {
   errorMessage?: string;
   errorDetail?: string;
   raw: Record<string, unknown>;
+};
+
+export type SendblueOperationalWebhook = {
+  raw: Record<string, unknown>;
+  messageHandle?: string;
+  fromNumber?: string;
+  toNumber?: string;
+  number?: string;
+  status?: string;
+  content?: string;
 };
 
 export type SendblueOutboundMessage = {

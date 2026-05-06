@@ -12,6 +12,8 @@ import {
   pollMessagesDbForReply,
   sendTestIMessage
 } from '../../scripts/e2e/lib/messages.js';
+import { startNgrokTunnel, type StartedNgrokTunnel } from '../../scripts/e2e/lib/ngrok.js';
+import { SendblueWebhookClient } from '../../scripts/e2e/lib/sendblue-webhooks.js';
 import { loadE2EEnv, type E2EEnv } from './helpers/env.js';
 import { waitFor } from './helpers/wait.js';
 
@@ -20,6 +22,7 @@ describe('Sendblue real-device round trip', () => {
   let chatCalls: ChatEndpointRequest[] = [];
   let chatServer: Server;
   let agentServer: Server;
+  let ngrok: StartedNgrokTunnel | undefined;
   let statusStore: InMemoryStatusStore;
 
   beforeAll(async () => {
@@ -39,12 +42,13 @@ describe('Sendblue real-device round trip', () => {
       listener.on('error', reject);
     });
     const chatPort = (chatServer.address() as { port: number }).port;
+    const publicBaseUrl = env.publicBaseUrl ?? (ngrok = await startNgrokTunnel(env)).publicUrl;
 
     statusStore = new InMemoryStatusStore();
     const { app } = createApp({
       config: {
         port: env.agentPort,
-        publicBaseUrl: env.publicBaseUrl,
+        publicBaseUrl,
         chatEndpointUrl: `http://localhost:${chatPort}/chat`,
         chatEndpointTimeoutMs: 10000,
         sendblueApiBaseUrl: env.sendblueApiBaseUrl,
@@ -56,7 +60,7 @@ describe('Sendblue real-device round trip', () => {
       },
       chatClient: new HttpChatClient({
         port: env.agentPort,
-        publicBaseUrl: env.publicBaseUrl,
+        publicBaseUrl,
         chatEndpointUrl: `http://localhost:${chatPort}/chat`,
         chatEndpointTimeoutMs: 10000,
         sendblueApiBaseUrl: env.sendblueApiBaseUrl,
@@ -68,7 +72,7 @@ describe('Sendblue real-device round trip', () => {
       }),
       sendblueClient: new HttpSendblueClient({
         port: env.agentPort,
-        publicBaseUrl: env.publicBaseUrl,
+        publicBaseUrl,
         chatEndpointUrl: `http://localhost:${chatPort}/chat`,
         chatEndpointTimeoutMs: 10000,
         sendblueApiBaseUrl: env.sendblueApiBaseUrl,
@@ -86,11 +90,13 @@ describe('Sendblue real-device round trip', () => {
       listener.on('error', reject);
     });
 
+    await new SendblueWebhookClient(env).apply(publicBaseUrl);
   });
 
   afterAll(async () => {
     if (agentServer) await new Promise<void>(resolve => agentServer.close(() => resolve()));
     if (chatServer) await new Promise<void>(resolve => chatServer.close(() => resolve()));
+    if (ngrok) await ngrok.close();
   });
 
   it('sends a real iMessage through Sendblue and observes the reply', async () => {
@@ -99,7 +105,7 @@ describe('Sendblue real-device round trip', () => {
     const expectedReply = `[sendblue-e2e-reply:${id}] received`;
     const startedAt = Date.now();
 
-    await sendTestIMessage({ to: env.sendblueNumber, content: inbound });
+    await sendTestIMessage({ to: env.sendblueFromNumber, content: inbound });
 
     await waitFor(
       () => chatCalls.find(call => call.message.includes(`[sendblue-e2e:${id}]`)),
@@ -117,7 +123,7 @@ describe('Sendblue real-device round trip', () => {
     expect(terminalStatus.terminalStatus).toBe('DELIVERED');
 
     const reply = await pollMessagesDbForReply({
-      from: env.sendblueNumber,
+      from: env.sendblueFromNumber,
       contains: expectedReply,
       since: startedAt,
       dbPath: env.messagesDbPath,

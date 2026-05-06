@@ -33,6 +33,7 @@ type DbReplyRow = {
   date?: number | string;
   text?: string | null;
   attributedBodyHex?: string | null;
+  handleId?: string | null;
 };
 
 export function appleDateFromUnixMs(value: number | Date): bigint {
@@ -78,19 +79,19 @@ export function buildMessagesReplyQuery(options: {
 SELECT
   message.ROWID AS rowid,
   message.date AS date,
+  handle.id AS handleId,
   message.text AS text,
   hex(message.attributedBody) AS attributedBodyHex
 FROM message
 JOIN handle ON message.handle_id = handle.ROWID
 WHERE message.is_from_me = 0
-  AND handle.id = ${sqliteStringLiteral(options.from)}
   AND message.date >= ${sinceAppleDate.toString()}
   AND (
     message.text LIKE ${sqliteLikeContainsLiteral(options.contains)} ESCAPE '\\'
     OR (message.text IS NULL AND message.attributedBody IS NOT NULL)
   )
 ORDER BY message.date ASC
-LIMIT 20;`.trim();
+LIMIT 200;`.trim();
 }
 
 export async function pollMessagesDbForReply(
@@ -116,16 +117,21 @@ export async function pollMessagesDbForReply(
         since: options.since
       });
 
-      const textRow = rows.find(row => typeof row.text === 'string' && row.text.includes(options.contains));
-      if (textRow?.text && textRow.date !== undefined) {
+      const textRows = rows
+        .map(row => ({ row, text: textFromMessagesRow(row, options.contains) }))
+        .filter((match): match is { row: DbReplyRow; text: string } => Boolean(match.text));
+      const textRow =
+        textRows.find(match => handlesMatch(match.row.handleId, options.from)) ?? textRows[0];
+
+      if (textRow && textRow.row.date !== undefined) {
         return {
           text: textRow.text,
-          unixMs: unixMsFromAppleDate(textRow.date),
-          row: textRow
+          unixMs: unixMsFromAppleDate(textRow.row.date),
+          row: textRow.row
         };
       }
 
-      lastAttributedBodyRow = rows.find(row => row.attributedBodyHex);
+      lastAttributedBodyRow = rows.find(row => row.attributedBodyHex && handlesMatch(row.handleId, options.from));
     } catch (error) {
       lastError = error;
     }
@@ -238,6 +244,29 @@ function sqliteStringLiteral(value: string): string {
 
 function sqliteLikeContainsLiteral(value: string): string {
   return sqliteStringLiteral(`%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`);
+}
+
+function textFromMessagesRow(row: DbReplyRow, contains: string): string | undefined {
+  if (typeof row.text === 'string' && row.text.includes(contains)) return row.text;
+  if (!row.attributedBodyHex) return undefined;
+
+  const decoded = Buffer.from(row.attributedBodyHex, 'hex').toString('utf8');
+  return decoded.includes(contains) ? decoded : undefined;
+}
+
+function handlesMatch(actual: string | null | undefined, expected: string): boolean {
+  if (!actual) return false;
+  if (actual === expected) return true;
+
+  const actualDigits = digitsOnly(actual);
+  const expectedDigits = digitsOnly(expected);
+  if (!actualDigits || !expectedDigits) return false;
+
+  return actualDigits === expectedDigits || actualDigits.endsWith(expectedDigits) || expectedDigits.endsWith(actualDigits);
+}
+
+function digitsOnly(value: string): string {
+  return value.replaceAll(/\D/g, '');
 }
 
 function execFileText(

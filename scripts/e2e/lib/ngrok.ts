@@ -1,79 +1,45 @@
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { forward, type Config, type Listener } from '@ngrok/ngrok';
 import type { E2ESetupEnv } from './env.js';
 
-export type NgrokTunnel = {
-  public_url?: string;
-  proto?: string;
+export type NgrokForwarder = (config: Config) => Promise<Pick<Listener, 'url' | 'close'>>;
+
+export type StartedNgrokTunnel = {
+  publicUrl: string;
+  close(): Promise<void>;
 };
 
-export function parseNgrokPublicUrl(payload: unknown): string | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined;
-  const tunnels = (payload as { tunnels?: unknown }).tunnels;
-  if (!Array.isArray(tunnels)) return undefined;
+export function buildNgrokConfig(env: E2ESetupEnv): Config {
+  if (!env.ngrokAuthtoken) {
+    throw new Error('Missing required ngrok environment variable: NGROK_AUTHTOKEN');
+  }
 
-  const tunnel = tunnels.find((candidate): candidate is NgrokTunnel => {
-    if (typeof candidate !== 'object' || candidate === null) return false;
-    const url = (candidate as NgrokTunnel).public_url;
-    return typeof url === 'string' && url.startsWith('https://');
-  });
-
-  return tunnel?.public_url?.replace(/\/+$/, '');
-}
-
-export function checkNgrokCommand(bin: string): { ok: boolean; error?: string } {
-  const result = spawnSync(bin, ['version'], { encoding: 'utf8' });
-  if (result.status === 0) return { ok: true };
   return {
-    ok: false,
-    error: result.error?.message || result.stderr || `${bin} version exited with ${result.status}`
+    addr: env.agentPort,
+    authtoken: env.ngrokAuthtoken,
+    ...(env.ngrokDomain ? { domain: env.ngrokDomain } : {})
   };
 }
 
-export function startNgrok(env: E2ESetupEnv): ChildProcess {
-  const args = ['http', String(env.agentPort), '--log=stdout'];
-  if (env.ngrokDomain) {
-    args.push('--domain', env.ngrokDomain);
+export async function startNgrokTunnel(
+  env: E2ESetupEnv,
+  forwarder: NgrokForwarder = forward
+): Promise<StartedNgrokTunnel> {
+  const listener = await forwarder(buildNgrokConfig(env));
+  const publicUrl = normalizeNgrokUrl(listener.url());
+
+  if (!publicUrl) {
+    await listener.close();
+    throw new Error('ngrok SDK did not return an HTTPS public URL');
   }
 
-  return spawn(env.ngrokBin, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      NGROK_AUTHTOKEN: env.ngrokAuthtoken ?? process.env.NGROK_AUTHTOKEN ?? ''
-    }
-  });
+  return {
+    publicUrl,
+    close: () => listener.close()
+  };
 }
 
-export async function getNgrokPublicUrl(
-  apiUrl: string,
-  fetchImpl: typeof fetch = fetch
-): Promise<string | undefined> {
-  const response = await fetchImpl(`${apiUrl.replace(/\/+$/, '')}/api/tunnels`);
-  if (!response.ok) {
-    throw new Error(`ngrok local API returned HTTP ${response.status}`);
-  }
-  return parseNgrokPublicUrl(await response.json());
-}
-
-export async function waitForNgrokPublicUrl(
-  apiUrl: string,
-  options: { timeoutMs?: number; intervalMs?: number; fetchImpl?: typeof fetch } = {}
-): Promise<string> {
-  const timeoutMs = options.timeoutMs ?? 15000;
-  const intervalMs = options.intervalMs ?? 250;
-  const start = Date.now();
-  let lastError: unknown;
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const url = await getNgrokPublicUrl(apiUrl, options.fetchImpl ?? fetch);
-      if (url) return url;
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
-  }
-
-  const suffix = lastError instanceof Error ? `: ${lastError.message}` : '';
-  throw new Error(`Timed out waiting for ngrok public URL${suffix}`);
+export function normalizeNgrokUrl(url: string | null): string | undefined {
+  if (!url) return undefined;
+  const normalized = url.replace(/\/+$/, '');
+  return normalized.startsWith('https://') ? normalized : undefined;
 }

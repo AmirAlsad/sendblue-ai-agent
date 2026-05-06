@@ -2,17 +2,22 @@ import express from 'express';
 import { mkdir, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { resolve } from 'node:path';
+import { CAPTURE_MANAGED_WEBHOOK_TYPES, sendblueWebhookPath } from '../../../src/sendblue/webhook-types.js';
 
 export type CapturedWebhookEnvelope = {
   headers: Record<string, string | string[] | undefined>;
   body: unknown;
   receivedAt: string;
   path: string;
+  sequence: number;
+  capture?: Record<string, unknown>;
 };
 
 export type CaptureServerOptions = {
   port: number;
   outputDir?: string;
+  metadata?: () => Record<string, unknown> | undefined;
+  onCapture?: (envelope: CapturedWebhookEnvelope) => void;
 };
 
 export type StartedCaptureServer = {
@@ -25,24 +30,44 @@ export type StartedCaptureServer = {
 export async function createSendblueCaptureApp(outputDir: string): Promise<{
   app: express.Express;
   envelopes: CapturedWebhookEnvelope[];
+}>;
+export async function createSendblueCaptureApp(
+  outputDir: string,
+  options: Pick<CaptureServerOptions, 'metadata' | 'onCapture'>
+): Promise<{
+  app: express.Express;
+  envelopes: CapturedWebhookEnvelope[];
+}>;
+export async function createSendblueCaptureApp(
+  outputDir: string,
+  options?: Pick<CaptureServerOptions, 'metadata' | 'onCapture'>
+): Promise<{
+  app: express.Express;
+  envelopes: CapturedWebhookEnvelope[];
 }> {
   const resolvedOutputDir = resolve(outputDir);
   await mkdir(resolvedOutputDir, { recursive: true });
 
   const app = express();
   const envelopes: CapturedWebhookEnvelope[] = [];
+  let sequence = 0;
   app.use(express.raw({ limit: '5mb', type: '*/*' }));
 
-  app.post(['/webhook/receive', '/webhook/status'], async (req, res) => {
+  app.post(CAPTURE_MANAGED_WEBHOOK_TYPES.map(sendblueWebhookPath), async (req, res) => {
+    const metadata = options?.metadata?.();
+    sequence += 1;
     const envelope: CapturedWebhookEnvelope = {
       headers: req.headers,
       body: parseBody(req.body),
       receivedAt: new Date().toISOString(),
-      path: req.path
+      path: req.path,
+      sequence,
+      ...(metadata ? { capture: metadata } : {})
     };
     envelopes.push(envelope);
     await writeCapture(resolvedOutputDir, envelope);
     res.status(202).json({ ok: true, captured: envelopes.length });
+    options?.onCapture?.(envelope);
   });
 
   return { app, envelopes };
@@ -52,7 +77,7 @@ export async function startSendblueCaptureServer(
   options: CaptureServerOptions
 ): Promise<StartedCaptureServer> {
   const outputDir = resolve(options.outputDir || '.captures/sendblue');
-  const { app, envelopes } = await createSendblueCaptureApp(outputDir);
+  const { app, envelopes } = await createSendblueCaptureApp(outputDir, options);
   const server = await listen(app, options.port);
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
@@ -67,10 +92,16 @@ export async function startSendblueCaptureServer(
 
 async function writeCapture(outputDir: string, envelope: CapturedWebhookEnvelope): Promise<void> {
   const safePath = envelope.path.replace(/^\/+/, '').replaceAll('/', '-') || 'root';
-  const filename = `${envelope.receivedAt.replaceAll(/[:.]/g, '-')}-${safePath}.json`;
+  const scenario = typeof envelope.capture?.scenarioId === 'string' ? `${safeSegment(envelope.capture.scenarioId)}-` : '';
+  const sequence = String(envelope.sequence).padStart(4, '0');
+  const filename = `${envelope.receivedAt.replaceAll(/[:.]/g, '-')}-${sequence}-${scenario}${safePath}.json`;
   await writeFile(resolve(outputDir, filename), `${JSON.stringify(envelope, null, 2)}\n`, {
     mode: 0o600
   });
+}
+
+function safeSegment(value: string): string {
+  return value.replaceAll(/[^a-zA-Z0-9_-]/g, '-').replaceAll(/-+/g, '-');
 }
 
 function parseBody(body: unknown): unknown {

@@ -5,8 +5,10 @@ export function validateWebhookSecret(req: Request, config: AgentConfig): boolea
   if (!config.sendblueWebhookSecret) return true;
 
   const expected = config.sendblueWebhookSecret;
-  const headerName = config.sendblueWebhookSecretHeader.toLowerCase();
-  const actual = req.header(headerName);
+  const headerNames = new Set([
+    config.sendblueWebhookSecretHeader.toLowerCase(),
+    'sb-signing-secret'
+  ]);
 
-  return actual === expected;
+  return [...headerNames].some(headerName => req.header(headerName) === expected);
 }

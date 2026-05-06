@@ -11,6 +11,32 @@ import { dispatch } from '../helpers/dispatch.js';
 import { loadFixture } from '../helpers/fixtures.js';
 import { testConfig } from '../helpers/config.js';
 
+const observedScenarios = [
+  'basic-text',
+  'image-media',
+  'video-media',
+  'audio-or-file-media',
+  'tapback-heart',
+  'tapback-thumbs-up',
+  'tapback-thumbs-down',
+  'tapback-haha',
+  'tapback-emphasis',
+  'tapback-question',
+  'tapback-custom-emoji',
+  'effect-balloons',
+  'effect-celebration',
+  'group-message',
+  'sms-fallback'
+] as const;
+
+const operationalScenarios = [
+  ['typing_indicator', 'typing-indicator'],
+  ['call_log', 'call-log'],
+  ['line_blocked', 'line-blocked'],
+  ['line_assigned', 'line-assigned'],
+  ['contact_created', 'contact-created']
+] as const;
+
 class FakeChatClient implements ChatClient {
   calls: ChatEndpointRequest[] = [];
   nextResponse: ChatEndpointResponse = { messages: ['default reply'] };
@@ -135,6 +161,27 @@ describe('agent app flow', () => {
     });
   });
 
+  it('treats SMS service as SMS channel even when it was not downgraded', async () => {
+    expect(
+      (
+        await dispatch(app, {
+          method: 'POST',
+          path: '/webhook/receive',
+          headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+          body: loadFixture<{ body: unknown }>('sendblue/captured/observed/sms-fallback.json').body
+        })
+      ).status
+    ).toBe(202);
+
+    expect(chatClient.calls[0]).toMatchObject({
+      channel: 'sms',
+      sendblue: {
+        wasDowngraded: false,
+        service: 'SMS'
+      }
+    });
+  });
+
   it('accepts silence responses without calling Sendblue', async () => {
     chatClient.nextResponse = { silence: true };
 
@@ -174,6 +221,18 @@ describe('agent app flow', () => {
 
     expect(response.status).toBe(401);
     expect(chatClient.calls).toHaveLength(0);
+  });
+
+  it('accepts Sendblue documented signing-secret header', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { 'sb-signing-secret': config.sendblueWebhookSecret! },
+      body: loadFixture('sendblue/receive-basic.json')
+    });
+
+    expect(response.status).toBe(202);
+    expect(chatClient.calls).toHaveLength(1);
   });
 
   it('tracks status callbacks', async () => {
@@ -229,6 +288,51 @@ describe('agent app flow', () => {
       messageHandle: 'captured-outbound-001',
       terminalStatus: 'DELIVERED'
     });
+  });
+
+  it('replays redacted observed receive payloads through the app handlers', async () => {
+    chatClient.nextResponse = { silence: true };
+
+    for (const scenario of observedScenarios) {
+      const response = await replayCapturedEnvelope(
+        app,
+        loadFixture(`sendblue/captured/observed/${scenario}.json`)
+      );
+
+      expect(response.status, scenario).toBe(202);
+    }
+
+    expect(chatClient.calls).toHaveLength(observedScenarios.length);
+    expect(chatClient.calls.find(call => call.messageHandle === 'observed-image-media-001')).toMatchObject({
+      sendblue: {
+        mediaUrl: 'https://storage.googleapis.com/sendblue-fixtures/image-media.png'
+      }
+    });
+    expect(chatClient.calls.find(call => call.messageHandle === 'observed-group-message-001')).toMatchObject({
+      sendblue: {
+        groupId: 'observed-group-001',
+        groupDisplayName: '',
+        participants: ['+15550000001', '+15550000002', '+15550000003', '+15550000004']
+      }
+    });
+    expect(chatClient.calls.find(call => call.messageHandle === 'observed-tapback-custom-emoji-001')?.message).toMatch(
+      /^Reacted 👀 to /
+    );
+  });
+
+  it('replays operational webhook fixtures through generic handlers', async () => {
+    for (const [type, fixture] of operationalScenarios) {
+      const response = await replayCapturedEnvelope(
+        app,
+        loadFixture(`sendblue/captured/operational/${fixture}.json`)
+      );
+
+      expect(response.status, type).toBe(202);
+      expect(response.body).toEqual({ ok: true, type });
+    }
+
+    expect(chatClient.calls).toHaveLength(0);
+    expect(sendblueClient.calls).toHaveLength(0);
   });
 
   it('rejects malformed receive payloads', async () => {

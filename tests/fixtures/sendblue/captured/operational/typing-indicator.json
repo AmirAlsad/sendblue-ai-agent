@@ -1,0 +1,20 @@
+{
+  "headers": {
+    "content-type": "application/json",
+    "sb-signing-secret": "test-webhook-secret"
+  },
+  "body": {
+    "event_type": "typing_indicator",
+    "message_handle": "synthetic-typing-indicator-001",
+    "from_number": "+15550000001",
+    "to_number": "+15550000002",
+    "status": "started"
+  },
+  "receivedAt": "2026-05-06T00:00:00.000Z",
+  "path": "/webhook/typing-indicator",
+  "sequence": 1,
+  "capture": {
+    "source": "synthetic-operational-fixture",
+    "webhookType": "typing_indicator"
+  }
+}

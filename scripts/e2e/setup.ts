@@ -17,4 +17,4 @@ console.log('\nOne-time Mac setup still required outside Node:');
 console.log('- Messages.app signed into iMessage');
 console.log('- Terminal or the test runner granted Full Disk Access for ~/Library/Messages/chat.db');
 console.log('- macOS Automation permission granted when osascript first controls Messages.app');
-console.log('- ngrok installed or NGROK_BIN pointed at the ngrok executable');
+console.log('- ngrok auth token added as NGROK_AUTHTOKEN');

@@ -5,6 +5,7 @@ import {
   webhookType,
   webhookUrl
 } from '../../../scripts/e2e/lib/sendblue-webhooks.js';
+import { CAPTURE_MANAGED_WEBHOOK_TYPES } from '../../../src/sendblue/webhook-types.js';
 
 describe('Sendblue webhook setup helpers', () => {
   it('builds receive and outbound webhook targets', () => {
@@ -22,10 +23,69 @@ describe('Sendblue webhook setup helpers', () => {
     ]);
   });
 
+  it('builds capture targets for every known Sendblue webhook type', () => {
+    expect(desiredWebhooks('https://agent.example.test/', 'secret', CAPTURE_MANAGED_WEBHOOK_TYPES)).toEqual([
+      {
+        type: 'receive',
+        url: 'https://agent.example.test/webhook/receive',
+        secret: 'secret'
+      },
+      {
+        type: 'outbound',
+        url: 'https://agent.example.test/webhook/status',
+        secret: 'secret'
+      },
+      {
+        type: 'typing_indicator',
+        url: 'https://agent.example.test/webhook/typing-indicator',
+        secret: 'secret'
+      },
+      {
+        type: 'call_log',
+        url: 'https://agent.example.test/webhook/call-log',
+        secret: 'secret'
+      },
+      {
+        type: 'line_blocked',
+        url: 'https://agent.example.test/webhook/line-blocked',
+        secret: 'secret'
+      },
+      {
+        type: 'line_assigned',
+        url: 'https://agent.example.test/webhook/line-assigned',
+        secret: 'secret'
+      },
+      {
+        type: 'contact_created',
+        url: 'https://agent.example.test/webhook/contact-created',
+        secret: 'secret'
+      }
+    ]);
+  });
+
   it('normalizes common list response shapes', () => {
     expect(normalizeWebhookList([{ id: '1', type: 'receive' }])).toHaveLength(1);
     expect(normalizeWebhookList({ webhooks: [{ id: '2', event_type: 'outbound' }] })).toHaveLength(1);
     expect(normalizeWebhookList({ data: [{ id: '3', webhook_type: 'receive' }] })).toHaveLength(1);
+    expect(
+      normalizeWebhookList({
+        webhooks: {
+          receive: ['https://agent.example.test/webhook/receive'],
+          outbound: [{ url: 'https://agent.example.test/webhook/status', secret: 'secret' }],
+          globalSecret: 'global-secret'
+        }
+      })
+    ).toEqual([
+      {
+        type: 'receive',
+        url: 'https://agent.example.test/webhook/receive'
+      },
+      {
+        type: 'outbound',
+        url: 'https://agent.example.test/webhook/status',
+        secret: 'secret'
+      }
+    ]);
   });
 
   it('reads webhook type and URL from compatible field names', () => {

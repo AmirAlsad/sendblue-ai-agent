@@ -42,7 +42,7 @@ export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
     sendblueFromNumber: requireEnv(env, 'SENDBLUE_FROM_NUMBER'),
     sendblueWebhookSecret: env.SENDBLUE_WEBHOOK_SECRET || undefined,
     sendblueWebhookSecretHeader:
-      env.SENDBLUE_WEBHOOK_SECRET_HEADER || 'x-sendblue-webhook-secret',
+      env.SENDBLUE_WEBHOOK_SECRET_HEADER || 'sb-signing-secret',
     chatEndpointTimeoutMs: optionalInt(env, 'CHAT_ENDPOINT_TIMEOUT_MS', 10000)
   };
 }

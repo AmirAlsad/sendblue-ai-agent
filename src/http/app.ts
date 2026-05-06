@@ -4,7 +4,12 @@ import type { AgentConfig } from '../config/env.js';
 import { type ChatClient, ChatEndpointError } from '../chat/client.js';
 import { createChatRequest } from '../chat/types.js';
 import { type SendblueClient } from '../sendblue/client.js';
-import { parseReceiveWebhook, parseStatusWebhook } from '../sendblue/parser.js';
+import { parseOperationalWebhook, parseReceiveWebhook, parseStatusWebhook } from '../sendblue/parser.js';
+import {
+  SENDBLUE_WEBHOOK_TYPES,
+  sendblueOperationalWebhookTypeFromPath,
+  sendblueWebhookPath
+} from '../sendblue/webhook-types.js';
 import { InMemoryStatusStore } from '../status/tracker.js';
 import { validateWebhookSecret } from './security.js';
 
@@ -92,6 +97,32 @@ export function createApp(deps: AppDependencies) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'invalid payload' });
     }
   });
+
+  app.post(
+    SENDBLUE_WEBHOOK_TYPES.filter(type => type !== 'receive' && type !== 'outbound').map(sendblueWebhookPath),
+    (req: Request, res: Response) => {
+      if (!validateWebhookSecret(req, deps.config)) {
+        res.status(401).json({ error: 'invalid webhook secret' });
+        return;
+      }
+
+      const webhookType = sendblueOperationalWebhookTypeFromPath(req.path);
+      try {
+        const webhook = parseOperationalWebhook(req.body);
+        logger.info(
+          {
+            webhookType,
+            messageHandle: webhook.messageHandle,
+            status: webhook.status
+          },
+          'received Sendblue operational webhook'
+        );
+        res.status(202).json({ ok: true, type: webhookType });
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'invalid payload' });
+      }
+    }
+  );
 
   return { app, statusStore };
 }

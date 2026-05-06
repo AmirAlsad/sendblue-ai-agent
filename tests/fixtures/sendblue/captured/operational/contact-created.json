@@ -1,0 +1,19 @@
+{
+  "headers": {
+    "content-type": "application/json",
+    "sb-signing-secret": "test-webhook-secret"
+  },
+  "body": {
+    "event_type": "contact_created",
+    "number": "+15550000001",
+    "sendblue_number": "+15550000002",
+    "status": "created"
+  },
+  "receivedAt": "2026-05-06T00:00:04.000Z",
+  "path": "/webhook/contact-created",
+  "sequence": 5,
+  "capture": {
+    "source": "synthetic-operational-fixture",
+    "webhookType": "contact_created"
+  }
+}

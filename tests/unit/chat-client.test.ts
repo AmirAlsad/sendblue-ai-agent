@@ -33,4 +33,29 @@ describe('chat endpoint contract', () => {
       }
     });
   });
+
+  it('maps observed SMS service and group metadata into chat requests', () => {
+    const sms = createChatRequest(
+      parseReceiveWebhook(loadFixture<{ body: unknown }>('sendblue/captured/observed/sms-fallback.json').body)
+    );
+    expect(sms).toMatchObject({
+      channel: 'sms',
+      sendblue: {
+        wasDowngraded: false,
+        service: 'SMS'
+      }
+    });
+
+    const group = createChatRequest(
+      parseReceiveWebhook(loadFixture<{ body: unknown }>('sendblue/captured/observed/group-message.json').body)
+    );
+    expect(group).toMatchObject({
+      channel: 'imessage',
+      sendblue: {
+        groupId: 'observed-group-001',
+        groupDisplayName: '',
+        participants: ['+15550000001', '+15550000002', '+15550000003', '+15550000004']
+      }
+    });
+  });
 });

@@ -13,7 +13,16 @@ describe('loadConfig', () => {
       SENDBLUE_FROM_NUMBER: '+15552220000',
       SENDBLUE_WEBHOOK_SECRET: 'webhook-secret',
       SENDBLUE_WEBHOOK_SECRET_HEADER: 'x-custom-secret',
-      CHAT_ENDPOINT_TIMEOUT_MS: '1234'
+      CHAT_ENDPOINT_TIMEOUT_MS: '1234',
+      REDIS_URL: 'redis://localhost:6379',
+      BUFFER_BASE_TIMEOUT_MS: '100',
+      BUFFER_GROWTH_FACTOR: '1.5',
+      BUFFER_MAX_TIMEOUT_MS: '900',
+      BUFFER_NOISE_MAX_DEVIATION: '0',
+      MAX_REPROCESS_ATTEMPTS: '3',
+      OUTBOUND_DELIVERY_TIMEOUT_MS: '4567',
+      USER_LOOKUP_URL: 'https://users.example.test/lookup',
+      OUTBOUND_TYPING_INDICATORS_ENABLED: 'false'
     });
 
     expect(config).toMatchObject({
@@ -26,7 +35,16 @@ describe('loadConfig', () => {
       sendblueFromNumber: '+15552220000',
       sendblueWebhookSecret: 'webhook-secret',
       sendblueWebhookSecretHeader: 'x-custom-secret',
-      chatEndpointTimeoutMs: 1234
+      chatEndpointTimeoutMs: 1234,
+      redisUrl: 'redis://localhost:6379',
+      bufferBaseTimeoutMs: 100,
+      bufferGrowthFactor: 1.5,
+      bufferMaxTimeoutMs: 900,
+      bufferNoiseMaxDeviation: 0,
+      maxReprocessAttempts: 3,
+      outboundDeliveryTimeoutMs: 4567,
+      userLookupUrl: 'https://users.example.test/lookup',
+      outboundTypingIndicatorsEnabled: false
     });
   });
 

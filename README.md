@@ -4,7 +4,7 @@ Messaging infrastructure for deploying an AI agent over iMessage with Sendblue.
 
 This package is intentionally transport and orchestration focused. The developer
 brings a chat endpoint; this package handles Sendblue webhook ingestion, outbound
-delivery, status tracking, deduplication, and later conversation intelligence.
+delivery, status tracking, deduplication, and conversation intelligence.
 
 ## Current Foundation
 
@@ -26,6 +26,44 @@ E2E orchestration scripts, but `npm run test:e2e` still requires a real Sendblue
 line, Messages.app on macOS, read access to `~/Library/Messages/chat.db`, and
 an ngrok tunnel.
 
+## Conversation Intelligence
+
+The v0.2 runtime buffers rapid direct-message bursts, calls the chat endpoint
+with both an aggregated `message` string and structured `messages[]`, sends
+agent replies through an ordered per-conversation queue, and advances that queue
+from Sendblue status callbacks. iMessage/RCS queues advance on `DELIVERED`;
+SMS/downgraded queues advance on `SENT`.
+
+Direct conversations are keyed as `direct:{sendblueLine}:{phoneNumber}`. Group
+messages are acknowledged and deduped in v0.2, but they do not call the chat
+endpoint or send replies until group routing is designed.
+
+When `REDIS_URL` is configured, state and buffer timers use Redis/BullMQ. Without
+Redis, the package uses in-memory state for local development and tests. Redis is
+the production path for durable buffering, dedupe, and queue state.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Configuration and tunables](docs/features/configuration.md)
+- [Inbound webhooks](docs/features/inbound-webhooks.md)
+- [Message buffering and interruptions](docs/features/message-buffering.md)
+- [Ordered delivery](docs/features/ordered-delivery.md)
+- [Typing indicators](docs/features/typing-indicators.md)
+- [Identity resolver](docs/features/identity-resolver.md)
+- [Conversation state and chat contract](docs/features/conversation-state.md)
+- [Testing infrastructure](docs/TESTING.md)
+- [Observed Sendblue payload structures](docs/SENDBLUE-PAYLOAD-STRUCTURES.md)
+
+## Examples
+
+Runnable local examples live in [examples](examples/):
+
+- `examples/minimal-chat-endpoint` - smallest possible `CHAT_ENDPOINT_URL`.
+- `examples/identity-lookup` - optional `USER_LOOKUP_URL` resolver.
+- `examples/v02-rich-chat-endpoint` - consumes buffered messages, conversation
+  metadata, identity, typing state, and SMS downgrade state.
+
 ## Environment
 
 Copy `.env.example` to `.env` and set the values for local development.
@@ -42,6 +80,19 @@ Optional for webhook secret validation:
 
 - `SENDBLUE_WEBHOOK_SECRET`
 - `SENDBLUE_WEBHOOK_SECRET_HEADER` (defaults to `sb-signing-secret`)
+
+Optional for conversation intelligence:
+
+- `REDIS_URL`
+- `BUFFER_BASE_TIMEOUT_MS` (defaults to `2000`)
+- `BUFFER_GROWTH_FACTOR` (defaults to `1.25`)
+- `BUFFER_MAX_TIMEOUT_MS` (defaults to `8000`)
+- `BUFFER_NOISE_MAX_DEVIATION` (defaults to `0.3`)
+- `MAX_REPROCESS_ATTEMPTS` (defaults to `2`)
+- `OUTBOUND_DELIVERY_TIMEOUT_MS` (defaults to `30000`)
+- `USER_LOOKUP_URL`
+- `OUTBOUND_TYPING_INDICATORS_ENABLED` (defaults to `true`)
+- `INBOUND_TYPING_STATE_ENABLED` (defaults to `true`)
 
 Required only for E2E:
 
@@ -103,7 +154,7 @@ active scenario before being written to `.captures/sendblue/`.
 
 Use `npm run capture:guided -- --list` to show scenario IDs, or run a focused
 capture with `npm run capture:guided -- --only tapback-custom-emoji,group-message`.
-Observed payload structures are summarized in `docs/sendblue-payload-structures.md`.
+Observed payload structures are summarized in `docs/SENDBLUE-PAYLOAD-STRUCTURES.md`.
 
 `test:e2e` also starts its own ngrok SDK tunnel and registers Sendblue webhooks
 unless `E2E_PUBLIC_BASE_URL` is set to an externally managed URL.

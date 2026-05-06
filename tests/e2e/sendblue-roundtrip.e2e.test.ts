@@ -4,6 +4,7 @@ import type { Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { HttpChatClient } from '../../src/chat/client.js';
 import type { ChatEndpointRequest } from '../../src/chat/types.js';
+import { loadConfig } from '../../src/config/env.js';
 import { createApp } from '../../src/http/app.js';
 import { HttpSendblueClient } from '../../src/sendblue/client.js';
 import { InMemoryStatusStore } from '../../src/status/tracker.js';
@@ -24,6 +25,7 @@ describe('Sendblue real-device round trip', () => {
   let agentServer: Server;
   let ngrok: StartedNgrokTunnel | undefined;
   let statusStore: InMemoryStatusStore;
+  let closeAgentApp: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
     env = loadE2EEnv();
@@ -43,47 +45,29 @@ describe('Sendblue real-device round trip', () => {
     });
     const chatPort = (chatServer.address() as { port: number }).port;
     const publicBaseUrl = env.publicBaseUrl ?? (ngrok = await startNgrokTunnel(env)).publicUrl;
+    const agentConfig = loadConfig({
+      ...process.env,
+      PORT: String(env.agentPort),
+      PUBLIC_BASE_URL: publicBaseUrl,
+      CHAT_ENDPOINT_URL: `http://localhost:${chatPort}/chat`,
+      CHAT_ENDPOINT_TIMEOUT_MS: '10000',
+      SENDBLUE_API_BASE_URL: env.sendblueApiBaseUrl,
+      SENDBLUE_API_KEY_ID: env.sendblueApiKeyId,
+      SENDBLUE_API_SECRET_KEY: env.sendblueApiSecretKey,
+      SENDBLUE_FROM_NUMBER: env.sendblueFromNumber,
+      SENDBLUE_WEBHOOK_SECRET: env.sendblueWebhookSecret,
+      SENDBLUE_WEBHOOK_SECRET_HEADER: env.sendblueWebhookSecretHeader
+    });
 
     statusStore = new InMemoryStatusStore();
-    const { app } = createApp({
-      config: {
-        port: env.agentPort,
-        publicBaseUrl,
-        chatEndpointUrl: `http://localhost:${chatPort}/chat`,
-        chatEndpointTimeoutMs: 10000,
-        sendblueApiBaseUrl: env.sendblueApiBaseUrl,
-        sendblueApiKeyId: env.sendblueApiKeyId,
-        sendblueApiSecretKey: env.sendblueApiSecretKey,
-        sendblueFromNumber: env.sendblueFromNumber,
-        sendblueWebhookSecret: env.sendblueWebhookSecret,
-        sendblueWebhookSecretHeader: env.sendblueWebhookSecretHeader
-      },
-      chatClient: new HttpChatClient({
-        port: env.agentPort,
-        publicBaseUrl,
-        chatEndpointUrl: `http://localhost:${chatPort}/chat`,
-        chatEndpointTimeoutMs: 10000,
-        sendblueApiBaseUrl: env.sendblueApiBaseUrl,
-        sendblueApiKeyId: env.sendblueApiKeyId,
-        sendblueApiSecretKey: env.sendblueApiSecretKey,
-        sendblueFromNumber: env.sendblueFromNumber,
-        sendblueWebhookSecret: env.sendblueWebhookSecret,
-        sendblueWebhookSecretHeader: env.sendblueWebhookSecretHeader
-      }),
-      sendblueClient: new HttpSendblueClient({
-        port: env.agentPort,
-        publicBaseUrl,
-        chatEndpointUrl: `http://localhost:${chatPort}/chat`,
-        chatEndpointTimeoutMs: 10000,
-        sendblueApiBaseUrl: env.sendblueApiBaseUrl,
-        sendblueApiKeyId: env.sendblueApiKeyId,
-        sendblueApiSecretKey: env.sendblueApiSecretKey,
-        sendblueFromNumber: env.sendblueFromNumber,
-        sendblueWebhookSecret: env.sendblueWebhookSecret,
-        sendblueWebhookSecretHeader: env.sendblueWebhookSecretHeader
-      }),
+    const created = createApp({
+      config: agentConfig,
+      chatClient: new HttpChatClient(agentConfig),
+      sendblueClient: new HttpSendblueClient(agentConfig),
       statusStore
     });
+    const { app } = created;
+    closeAgentApp = created.close;
 
     agentServer = await new Promise<Server>((resolve, reject) => {
       const listener = app.listen(env.agentPort, () => resolve(listener));
@@ -95,6 +79,7 @@ describe('Sendblue real-device round trip', () => {
 
   afterAll(async () => {
     if (agentServer) await new Promise<void>(resolve => agentServer.close(() => resolve()));
+    if (closeAgentApp) await closeAgentApp();
     if (chatServer) await new Promise<void>(resolve => chatServer.close(() => resolve()));
     if (ngrok) await ngrok.close();
   });

@@ -5,10 +5,10 @@
   },
   "body": {
     "event_type": "typing_indicator",
-    "message_handle": "synthetic-typing-indicator-001",
-    "from_number": "+15550000001",
-    "to_number": "+15550000002",
-    "status": "started"
+    "number": "+15550000001",
+    "from_number": "+15550000002",
+    "is_typing": true,
+    "timestamp": "2026-05-06T00:00:00.000Z"
   },
   "receivedAt": "2026-05-06T00:00:00.000Z",
   "path": "/webhook/typing-indicator",

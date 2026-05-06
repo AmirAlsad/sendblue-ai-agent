@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseOperationalWebhook, parseReceiveWebhook, parseStatusWebhook } from '../../src/sendblue/parser.js';
+import {
+  parseOperationalWebhook,
+  parseReceiveWebhook,
+  parseStatusWebhook,
+  parseTypingIndicatorWebhook
+} from '../../src/sendblue/parser.js';
 import { loadFixture } from '../helpers/fixtures.js';
 
 const observedScenarios = [
@@ -179,6 +184,22 @@ describe('Sendblue webhook parsing', () => {
       raw: {
         unknown_field: { nested: true }
       }
+    });
+  });
+
+  it('parses typing indicator webhook payloads', () => {
+    expect(
+      parseTypingIndicatorWebhook({
+        number: '+15551110001',
+        from_number: '+15552220000',
+        is_typing: true,
+        timestamp: '2026-05-06T12:00:00.000Z'
+      })
+    ).toMatchObject({
+      number: '+15551110001',
+      fromNumber: '+15552220000',
+      isTyping: true,
+      timestamp: '2026-05-06T12:00:00.000Z'
     });
   });
 });

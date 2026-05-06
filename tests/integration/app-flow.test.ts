@@ -4,7 +4,12 @@ import { createApp } from '../../src/http/app.js';
 import type { ChatClient } from '../../src/chat/client.js';
 import type { ChatEndpointRequest, ChatEndpointResponse } from '../../src/chat/types.js';
 import type { SendblueClient } from '../../src/sendblue/client.js';
-import type { SendblueOutboundMessage, SendblueSendResult } from '../../src/sendblue/types.js';
+import type {
+  SendblueOutboundMessage,
+  SendblueSendResult,
+  SendblueTypingIndicator,
+  SendblueTypingIndicatorResult
+} from '../../src/sendblue/types.js';
 import { InMemoryStatusStore } from '../../src/status/tracker.js';
 import { replayCapturedEnvelope } from '../helpers/captured-envelopes.js';
 import { dispatch } from '../helpers/dispatch.js';
@@ -51,10 +56,16 @@ class FakeChatClient implements ChatClient {
 
 class FakeSendblueClient implements SendblueClient {
   calls: SendblueOutboundMessage[] = [];
+  typingCalls: SendblueTypingIndicator[] = [];
 
   async sendMessage(message: SendblueOutboundMessage): Promise<SendblueSendResult> {
     this.calls.push(message);
     return { messageHandle: `sent-${this.calls.length}`, raw: { ok: true } };
+  }
+
+  async sendTypingIndicator(indicator: SendblueTypingIndicator): Promise<SendblueTypingIndicatorResult> {
+    this.typingCalls.push(indicator);
+    return { status: 'SENT', errorMessage: null, raw: { ok: true } };
   }
 }
 
@@ -89,16 +100,48 @@ describe('agent app flow', () => {
     });
 
     expect(response.status).toBe(202);
-    expect(response.body).toEqual({ ok: true, sent: 2 });
+    expect(response.body).toMatchObject({ ok: true, accepted: true, state: 'buffering' });
 
     expect(chatClient.calls).toHaveLength(1);
     expect(chatClient.calls[0]).toMatchObject({
       message: 'hello from iMessage',
       fromNumber: '+15551110001',
       messageHandle: 'recv-basic-001',
-      channel: 'imessage'
+      channel: 'imessage',
+      conversation: {
+        key: 'direct:+15552220000:+15551110001',
+        type: 'direct',
+        smsDowngraded: false
+      },
+      messages: [
+        {
+          content: 'hello from iMessage',
+          messageHandle: 'recv-basic-001'
+        }
+      ]
     });
 
+    expect(sendblueClient.calls).toEqual([
+      {
+        toNumber: '+15551110001',
+        content: 'reply one',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      }
+    ]);
+    expect(sendblueClient.typingCalls).toEqual([{ toNumber: '+15551110001' }]);
+
+    const status = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: {
+        message_handle: 'sent-1',
+        status: 'DELIVERED',
+        service: 'iMessage'
+      }
+    });
+
+    expect(status.status).toBe(200);
     expect(sendblueClient.calls).toEqual([
       {
         toNumber: '+15551110001',
@@ -193,11 +236,11 @@ describe('agent app flow', () => {
     });
 
     expect(response.status).toBe(202);
-    expect(response.body).toEqual({ ok: true, sent: 0 });
+    expect(response.body).toMatchObject({ ok: true, accepted: true });
     expect(sendblueClient.calls).toHaveLength(0);
   });
 
-  it('returns 502 when the chat endpoint fails', async () => {
+  it('acknowledges receives and does not send when the chat endpoint fails', async () => {
     chatClient.nextError = new Error('chat down');
 
     const response = await dispatch(app, {
@@ -207,7 +250,7 @@ describe('agent app flow', () => {
       body: loadFixture('sendblue/receive-basic.json')
     });
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(202);
     expect(sendblueClient.calls).toHaveLength(0);
   });
 
@@ -251,7 +294,7 @@ describe('agent app flow', () => {
     });
   });
 
-  it('replays a captured receive envelope through the app handlers', async () => {
+  it('replays a captured group receive envelope without replying in v0.2', async () => {
     chatClient.nextResponse = { messages: ['captured reply'] };
 
     const response = await replayCapturedEnvelope(
@@ -260,21 +303,9 @@ describe('agent app flow', () => {
     );
 
     expect(response.status).toBe(202);
-    expect(chatClient.calls[0]).toMatchObject({
-      message: 'captured fixture hello',
-      messageHandle: 'captured-recv-001',
-      sendblue: {
-        groupId: 'captured-group-001',
-        participants: ['+15550000001', '+15550000003']
-      }
-    });
-    expect(sendblueClient.calls).toEqual([
-      {
-        toNumber: '+15550000001',
-        content: 'captured reply',
-        statusCallback: 'https://agent.example.test/webhook/status'
-      }
-    ]);
+    expect(response.body).toMatchObject({ ok: true, group: true, accepted: false });
+    expect(chatClient.calls).toHaveLength(0);
+    expect(sendblueClient.calls).toHaveLength(0);
   });
 
   it('replays a captured status envelope through the app handlers', async () => {
@@ -302,19 +333,13 @@ describe('agent app flow', () => {
       expect(response.status, scenario).toBe(202);
     }
 
-    expect(chatClient.calls).toHaveLength(observedScenarios.length);
+    expect(chatClient.calls).toHaveLength(observedScenarios.length - 1);
     expect(chatClient.calls.find(call => call.messageHandle === 'observed-image-media-001')).toMatchObject({
       sendblue: {
         mediaUrl: 'https://storage.googleapis.com/sendblue-fixtures/image-media.png'
       }
     });
-    expect(chatClient.calls.find(call => call.messageHandle === 'observed-group-message-001')).toMatchObject({
-      sendblue: {
-        groupId: 'observed-group-001',
-        groupDisplayName: '',
-        participants: ['+15550000001', '+15550000002', '+15550000003', '+15550000004']
-      }
-    });
+    expect(chatClient.calls.find(call => call.messageHandle === 'observed-group-message-001')).toBeUndefined();
     expect(chatClient.calls.find(call => call.messageHandle === 'observed-tapback-custom-emoji-001')?.message).toMatch(
       /^Reacted 👀 to /
     );
@@ -328,7 +353,11 @@ describe('agent app flow', () => {
       );
 
       expect(response.status, type).toBe(202);
-      expect(response.body).toEqual({ ok: true, type });
+      if (type === 'typing_indicator') {
+        expect(response.body).toMatchObject({ ok: true });
+      } else {
+        expect(response.body).toEqual({ ok: true, type });
+      }
     }
 
     expect(chatClient.calls).toHaveLength(0);

@@ -39,6 +39,7 @@ export type SendblueReceiveWebhook = {
   mediaUrl?: string | null;
   groupId?: string | null;
   groupDisplayName?: string | null;
+  sendblueNumber?: string | null;
   participants?: unknown;
   sendStyle?: string | null;
   messageType?: string | null;
@@ -51,6 +52,8 @@ export type SendblueStatusWebhook = {
   errorCode?: string;
   errorMessage?: string;
   errorDetail?: string;
+  wasDowngraded?: boolean | null;
+  service?: string;
   raw: Record<string, unknown>;
 };
 
@@ -68,6 +71,16 @@ export type SendblueOutboundMessage = {
   toNumber: string;
   content: string;
   statusCallback: string;
+};
+
+export type SendblueTypingIndicator = {
+  toNumber: string;
+};
+
+export type SendblueTypingIndicatorResult = {
+  status?: string;
+  errorMessage?: string | null;
+  raw: unknown;
 };
 
 export type SendblueSendResult = {

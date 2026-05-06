@@ -72,6 +72,7 @@ export function parseReceiveWebhook(payload: unknown): SendblueReceiveWebhook {
     mediaUrl: readString(payload, 'media_url') ?? null,
     groupId: readString(payload, 'group_id') ?? null,
     groupDisplayName: readString(payload, 'group_display_name') ?? null,
+    sendblueNumber: readString(payload, 'sendblue_number') ?? null,
     participants: payload.participants,
     sendStyle: readString(payload, 'send_style') ?? null,
     messageType: readString(payload, 'message_type') ?? null,
@@ -95,6 +96,8 @@ export function parseStatusWebhook(payload: unknown): SendblueStatusWebhook {
     errorCode: readString(payload, 'error_code'),
     errorMessage: readString(payload, 'error_message'),
     errorDetail: readString(payload, 'error_detail'),
+    wasDowngraded: readNullableBoolean(payload, 'was_downgraded'),
+    service: readString(payload, 'service'),
     raw: payload
   };
 }
@@ -111,6 +114,28 @@ export function parseOperationalWebhook(payload: unknown): SendblueOperationalWe
     number: readString(payload, 'number'),
     status: readString(payload, 'status'),
     content: readString(payload, 'content'),
+    raw: payload
+  };
+}
+
+export type SendblueTypingIndicatorWebhook = {
+  number: string;
+  fromNumber: string;
+  isTyping: boolean;
+  timestamp?: string;
+  raw: Record<string, unknown>;
+};
+
+export function parseTypingIndicatorWebhook(payload: unknown): SendblueTypingIndicatorWebhook {
+  if (!isRecord(payload)) {
+    throw new Error('Sendblue typing indicator payload must be an object');
+  }
+
+  return {
+    number: readString(payload, 'number', { required: true })!,
+    fromNumber: readString(payload, 'from_number', { required: true })!,
+    isTyping: readBoolean(payload, 'is_typing'),
+    timestamp: readString(payload, 'timestamp'),
     raw: payload
   };
 }

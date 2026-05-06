@@ -2,9 +2,18 @@ import express, { type Request, type Response } from 'express';
 import pino from 'pino';
 import type { AgentConfig } from '../config/env.js';
 import { type ChatClient, ChatEndpointError } from '../chat/client.js';
-import { createChatRequest } from '../chat/types.js';
+import { ConversationAgent } from '../conversation/agent.js';
+import { BullMqBufferScheduler, InMemoryBufferScheduler, type BufferScheduler } from '../conversation/scheduler.js';
+import { InMemoryConversationStore, type ConversationStore } from '../conversation/store.js';
+import { RedisConversationStore } from '../conversation/redis-store.js';
+import { HttpIdentityResolver, type IdentityResolver } from '../identity/resolver.js';
 import { type SendblueClient } from '../sendblue/client.js';
-import { parseOperationalWebhook, parseReceiveWebhook, parseStatusWebhook } from '../sendblue/parser.js';
+import {
+  parseOperationalWebhook,
+  parseReceiveWebhook,
+  parseStatusWebhook,
+  parseTypingIndicatorWebhook
+} from '../sendblue/parser.js';
 import {
   SENDBLUE_WEBHOOK_TYPES,
   sendblueOperationalWebhookTypeFromPath,
@@ -18,14 +27,39 @@ export type AppDependencies = {
   chatClient: ChatClient;
   sendblueClient: SendblueClient;
   statusStore?: InMemoryStatusStore;
+  conversationStore?: ConversationStore;
+  bufferScheduler?: BufferScheduler;
+  identityResolver?: IdentityResolver;
   logger?: pino.Logger;
 };
 
 export function createApp(deps: AppDependencies) {
   const app = express();
   const statusStore = deps.statusStore ?? new InMemoryStatusStore();
-  const seenReceiveHandles = new Set<string>();
   const logger = deps.logger ?? pino({ level: process.env.LOG_LEVEL || 'info' });
+  const conversationStore =
+    deps.conversationStore ??
+    (deps.config.redisUrl
+      ? new RedisConversationStore(deps.config)
+      : new InMemoryConversationStore(deps.config));
+  const bufferScheduler =
+    deps.bufferScheduler ??
+    (deps.config.redisUrl
+      ? new BullMqBufferScheduler(deps.config, logger)
+      : new InMemoryBufferScheduler());
+  const identityResolver =
+    deps.identityResolver ??
+    (deps.config.userLookupUrl ? new HttpIdentityResolver(deps.config) : undefined);
+  const conversationAgent = new ConversationAgent({
+    config: deps.config,
+    chatClient: deps.chatClient,
+    sendblueClient: deps.sendblueClient,
+    statusStore,
+    store: conversationStore,
+    scheduler: bufferScheduler,
+    identityResolver,
+    logger
+  });
 
   app.use(express.json({ limit: '1mb' }));
 
@@ -47,29 +81,9 @@ export function createApp(deps: AppDependencies) {
       return;
     }
 
-    if (seenReceiveHandles.has(webhook.messageHandle)) {
-      res.status(200).json({ ok: true, duplicate: true });
-      return;
-    }
-    seenReceiveHandles.add(webhook.messageHandle);
-
     try {
-      const chatResponse = await deps.chatClient.complete(createChatRequest(webhook));
-      if ('silence' in chatResponse && chatResponse.silence === true) {
-        res.status(202).json({ ok: true, sent: 0 });
-        return;
-      }
-
-      const statusCallback = `${deps.config.publicBaseUrl}/webhook/status`;
-      for (const message of chatResponse.messages) {
-        await deps.sendblueClient.sendMessage({
-          toNumber: webhook.fromNumber,
-          content: message,
-          statusCallback
-        });
-      }
-
-      res.status(202).json({ ok: true, sent: chatResponse.messages.length });
+      const result = await conversationAgent.handleReceive(webhook);
+      res.status('duplicate' in result && result.duplicate ? 200 : 202).json(result);
     } catch (error) {
       logger.warn(
         {
@@ -83,7 +97,7 @@ export function createApp(deps: AppDependencies) {
     }
   });
 
-  app.post('/webhook/status', (req: Request, res: Response) => {
+  app.post('/webhook/status', async (req: Request, res: Response) => {
     if (!validateWebhookSecret(req, deps.config)) {
       res.status(401).json({ error: 'invalid webhook secret' });
       return;
@@ -91,8 +105,24 @@ export function createApp(deps: AppDependencies) {
 
     try {
       const update = parseStatusWebhook(req.body);
-      const record = statusStore.apply(update);
-      res.status(200).json({ ok: true, record });
+      const result = await conversationAgent.handleStatus(update);
+      res.status(200).json(result);
+    } catch (error) {
+      logger.warn({ err: error }, 'failed to process status callback');
+      res.status(400).json({ error: error instanceof Error ? error.message : 'invalid payload' });
+    }
+  });
+
+  app.post('/webhook/typing-indicator', async (req: Request, res: Response) => {
+    if (!validateWebhookSecret(req, deps.config)) {
+      res.status(401).json({ error: 'invalid webhook secret' });
+      return;
+    }
+
+    try {
+      const webhook = parseTypingIndicatorWebhook(req.body);
+      const result = await conversationAgent.handleTyping(webhook);
+      res.status(202).json(result);
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'invalid payload' });
     }
@@ -124,5 +154,11 @@ export function createApp(deps: AppDependencies) {
     }
   );
 
-  return { app, statusStore };
+  return {
+    app,
+    statusStore,
+    conversationAgent,
+    conversationStore,
+    close: () => conversationAgent.close()
+  };
 }

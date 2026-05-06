@@ -17,7 +17,7 @@ Keep the original field names and null/empty-string behavior intact. The point
 of this directory is to preserve real Sendblue payload shape, not real user data.
 
 The `observed/` directory contains redacted receive envelopes from guided rich
-payload captures. See `docs/sendblue-payload-structures.md` for the observed
+payload captures. See `docs/SENDBLUE-PAYLOAD-STRUCTURES.md` for the observed
 message, media, Tapback, effect, group, and SMS shapes.
 
 The `operational/` directory contains synthetic route fixtures for Sendblue

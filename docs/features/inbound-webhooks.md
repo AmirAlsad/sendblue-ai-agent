@@ -2,10 +2,10 @@
 
 ## What it does
 
-Accepts Sendblue receive, status, typing, and operational webhooks; validates an
-optional shared secret; parses and preserves Sendblue payload metadata; dedupes
-inbound retries by `message_handle`; and routes direct messages into the
-conversation state machine.
+Accepts Sendblue receive, status, documented typing, and operational webhooks;
+validates an optional shared secret; parses and preserves Sendblue payload
+metadata; dedupes inbound retries by `message_handle`; and routes direct
+messages into the conversation state machine.
 
 ## How it works
 
@@ -44,9 +44,11 @@ payloads include explicit reply metadata for the agent.
 `/webhook/status` tracks Sendblue outbound lifecycle statuses and advances
 ordered delivery queues when the current message reaches the expected
 channel-specific gate. `/webhook/typing-indicator` stores inbound typing state
-when enabled and does not call the chat endpoint on its own. Other operational
-webhooks are parsed generically, logged, and acknowledged for future feature
-work.
+when enabled and does not call the chat endpoint on its own. This route reflects
+Sendblue's documented `typing_indicator` webhook type, but live accounts must
+verify that the webhook registration API accepts and persists that type before
+depending on inbound typing. Other operational webhooks are parsed generically,
+logged, and acknowledged for future feature work.
 
 If `SENDBLUE_WEBHOOK_SECRET` is configured, every webhook route requires either
 the configured secret header or `sb-signing-secret` to match. If no secret is
@@ -82,5 +84,9 @@ configured, webhook secret validation is skipped.
   real-line validation.
 - Operational webhook handlers currently preserve/log payloads but do not
   trigger product behavior beyond typing state.
+- The local `typing_indicator` route and parser are implemented, but real
+  inbound typing requires account/API support for registering that webhook type.
+  Live testing has observed webhook registration responses that reject or drop
+  `typing_indicator` despite the public docs listing it.
 - `READ` and `RECEIVED` are not accepted as outbound status callback statuses;
   `RECEIVED` is only valid as an inbound receive payload status.

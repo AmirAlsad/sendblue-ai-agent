@@ -30,8 +30,19 @@ export type AppDependencies = {
   conversationStore?: ConversationStore;
   bufferScheduler?: BufferScheduler;
   identityResolver?: IdentityResolver;
+  webhookObserver?: (envelope: ObservedWebhookEnvelope) => void | Promise<void>;
   logger?: pino.Logger;
 };
+
+export type ObservedWebhookEnvelope = {
+  headers: Record<string, string | string[] | undefined>;
+  body: unknown;
+  rawBody?: string;
+  receivedAt: string;
+  path: string;
+};
+
+type RawBodyRequest = Request & { rawBody?: string };
 
 export function createApp(deps: AppDependencies) {
   const app = express();
@@ -61,13 +72,21 @@ export function createApp(deps: AppDependencies) {
     logger
   });
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(
+    express.json({
+      limit: '1mb',
+      verify: (req, _res, buffer) => {
+        (req as RawBodyRequest).rawBody = buffer.toString('utf8');
+      }
+    })
+  );
 
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ ok: true });
   });
 
   app.post('/webhook/receive', async (req: Request, res: Response) => {
+    await observeWebhook(req, deps.webhookObserver, logger);
     if (!validateWebhookSecret(req, deps.config)) {
       res.status(401).json({ error: 'invalid webhook secret' });
       return;
@@ -98,6 +117,7 @@ export function createApp(deps: AppDependencies) {
   });
 
   app.post('/webhook/status', async (req: Request, res: Response) => {
+    await observeWebhook(req, deps.webhookObserver, logger);
     if (!validateWebhookSecret(req, deps.config)) {
       res.status(401).json({ error: 'invalid webhook secret' });
       return;
@@ -114,6 +134,7 @@ export function createApp(deps: AppDependencies) {
   });
 
   app.post('/webhook/typing-indicator', async (req: Request, res: Response) => {
+    await observeWebhook(req, deps.webhookObserver, logger);
     if (!validateWebhookSecret(req, deps.config)) {
       res.status(401).json({ error: 'invalid webhook secret' });
       return;
@@ -129,8 +150,11 @@ export function createApp(deps: AppDependencies) {
   });
 
   app.post(
-    SENDBLUE_WEBHOOK_TYPES.filter(type => type !== 'receive' && type !== 'outbound').map(sendblueWebhookPath),
-    (req: Request, res: Response) => {
+    SENDBLUE_WEBHOOK_TYPES.filter(
+      type => type !== 'receive' && type !== 'outbound' && type !== 'typing_indicator'
+    ).map(sendblueWebhookPath),
+    async (req: Request, res: Response) => {
+      await observeWebhook(req, deps.webhookObserver, logger);
       if (!validateWebhookSecret(req, deps.config)) {
         res.status(401).json({ error: 'invalid webhook secret' });
         return;
@@ -161,4 +185,24 @@ export function createApp(deps: AppDependencies) {
     conversationStore,
     close: () => conversationAgent.close()
   };
+}
+
+async function observeWebhook(
+  req: Request,
+  observer: AppDependencies['webhookObserver'],
+  logger: pino.Logger
+): Promise<void> {
+  if (!observer) return;
+
+  try {
+    await observer({
+      headers: req.headers,
+      body: req.body,
+      rawBody: (req as RawBodyRequest).rawBody,
+      receivedAt: new Date().toISOString(),
+      path: req.path
+    });
+  } catch (error) {
+    logger.warn({ err: error, path: req.path }, 'webhook observer failed');
+  }
 }

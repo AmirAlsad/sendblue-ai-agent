@@ -26,6 +26,11 @@ webhook types that have not yet been observed in real captures:
 `contact_created`. Replace or supplement those files with redacted observed
 payloads once the callbacks are captured.
 
+`typing_indicator` is especially important to keep synthetic until proven:
+Sendblue's public docs list the type, but live webhook registration may reject
+or fail to persist it for an account. Only move it into observed fixture status
+after a redacted real `/webhook/typing-indicator` envelope is captured.
+
 The committed envelope shape is:
 
 ```json

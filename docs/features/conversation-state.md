@@ -19,7 +19,8 @@ channel metadata:
 
 - `channel` - `imessage`, `sms`, `rcs`, or `unknown`.
 - `smsDowngraded` - true after an SMS service or downgrade signal.
-- `typing` - latest inbound typing state, when enabled.
+- `typing` - latest inbound typing state, when enabled and when the Sendblue
+  account/line can actually receive the documented `typing_indicator` webhook.
 - `identity` - optional resolved user identity.
 
 Channel state is updated from receive and status webhook metadata. `service:

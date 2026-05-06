@@ -89,6 +89,62 @@ comma-separated scenario list for focused follow-up captures, for example:
 npm run capture:guided -- --only tapback-custom-emoji,effect-balloons,group-message
 ```
 
+Run:
+
+```bash
+npm run showcase:e2e
+```
+
+This starts a scenario-aware local chat endpoint, agent server, ngrok SDK
+tunnel, and managed Sendblue webhooks. It sends guided prompts to
+`E2E_TEST_DEVICE_NUMBER`; after each user action, the agent replies in iMessage
+with what it understood and the script writes a local evidence summary.
+
+The showcase covers direct text echo, rapid-message buffering, standard and
+custom Tapback understanding, inbound media, optional outbound hosted media,
+send effects, reply-intent fallback, XML tag parsing, best-effort mark-read API
+calls, outbound typing refresh attempts, inbound typing webhook state, addressed
+groups, and SMS fallback. Group, SMS, custom Tapback, inbound typing, and
+outbound media are optional; reply `skip` to move past the current step.
+
+Use `npm run showcase:e2e -- --list` to print scenario IDs, or
+`npm run showcase:e2e -- --only basic-text,tapback-heart,read-typing` for a
+focused run.
+
+Optional showcase settings:
+
+- `SHOWCASE_MEDIA_URL` - public HTTPS asset used by the outbound media step.
+  If unset, that step replies that hosted media was skipped.
+- `SHOWCASE_READ_TYPING_DELAY_MS` - chat endpoint delay for the
+  read-receipt/typing step, default `15000`.
+- `SHOWCASE_BUFFER_BASE_TIMEOUT_MS`, `SHOWCASE_BUFFER_GROWTH_FACTOR`,
+  `SHOWCASE_BUFFER_MAX_TIMEOUT_MS`, and `SHOWCASE_BUFFER_NOISE_MAX_DEVIATION` -
+  showcase-only buffer settings. They default to a deliberately longer and
+  non-random quiet window than the normal agent runtime.
+- `SHOWCASE_TYPING_REFRESH_INTERVAL_MS` and `SHOWCASE_TYPING_REFRESH_MAX_MS` -
+  showcase-only outbound typing refresh settings for the dedicated typing step.
+
+Showcase captures are written under `.captures/sendblue-showcase/<session>/`.
+The directory includes raw webhook envelopes plus `summary.json` with receive,
+status, outbound message, reaction, mark-read attempt/success/failure, outbound
+typing attempt/success/failure, chat request buffering, and inbound typing
+webhook counts for each step. Treat these artifacts like other captures: they may
+contain secrets, phone numbers, tunnel URLs, and real message content.
+
+The public Sendblue docs list `typing_indicator` as a webhook type, but some
+live account webhook API responses reject `POST` registration for that type or
+drop it from full `PUT` updates. The showcase therefore attempts to register
+`typing_indicator`, verifies whether it persisted in the account webhook list,
+and records the diagnostic in `summary.json`. If it cannot be registered, the
+inbound typing step still runs but reports that no inbound typing state arrived
+before the user's message.
+
+Do not promote inbound typing to an observed E2E capability until
+`summary.json` shows `typingWebhookRegistration.persisted: true` and at least
+one `/webhook/typing-indicator` capture exists. Until then, typing indicator
+coverage is split into outbound typing API attempts, which can be observed in
+the Sendblue call instrumentation, and synthetic/local inbound route coverage.
+
 ## Real-Device E2E
 
 Run:
@@ -141,10 +197,14 @@ Promote a scenario to real-device E2E only after confirming these expectations:
   Messages.app can display.
 - Send effects use `sendStyle` only on direct iMessage conversations and degrade
   to plain text on SMS or downgraded conversations.
-- Reactions and replies target a captured message identifier or documented
-  Sendblue selector; missing targets must not send duplicate plain messages.
-- Read receipts are gated by `READ_RECEIPTS_ENABLED` until observed
-  Sendblue behavior is captured.
+- Reactions target a captured message identifier or documented Sendblue
+  selector; missing targets must not send duplicate plain messages.
+- Reply actions preserve chat-contract intent but currently degrade to normal
+  Sendblue messages because Sendblue direct sends do not expose a native reply
+  target parameter.
+- Read receipts are best-effort `POST /api/mark-read` calls gated by
+  `READ_RECEIPTS_ENABLED`; there is no `READ` status callback and on-device
+  display must be manually verified on an enabled Sendblue account.
 - Typing refreshes stop after response completion, SMS downgrade, interruption,
   or terminal delivery status.
 - Group replies are sent only when the inbound group message is addressed to
@@ -197,6 +257,11 @@ Synthetic operational webhook fixtures live under
 `typing_indicator`, `call_log`, `line_blocked`, `line_assigned`, and
 `contact_created`; replace or supplement them with redacted observed captures
 once those callbacks are collected from Sendblue.
+
+For `typing_indicator`, first confirm that the account webhook API accepts and
+persists the type. A successful full-webhook `PUT` alone is not enough; follow
+up with `GET /api/account/webhooks` and verify the `typing_indicator` entry is
+still present.
 
 Before committing captured payloads, remove account emails, phone numbers,
 message content from real people, credentials, webhook secrets, and tunnel URLs.

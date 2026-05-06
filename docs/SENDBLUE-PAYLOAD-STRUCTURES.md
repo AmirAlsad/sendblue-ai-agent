@@ -131,8 +131,7 @@ shape: reactions, replies, read receipts, typing refreshes, and send effects.
 
 ## Operational Webhook Types
 
-The test harness has route and registration coverage for these Sendblue webhook
-types:
+The test harness has route coverage for these Sendblue webhook types:
 
 - `typing_indicator`: `/webhook/typing-indicator`
 - `call_log`: `/webhook/call-log`
@@ -144,6 +143,13 @@ Current fixtures for these are synthetic route fixtures under
 `tests/fixtures/sendblue/captured/operational/`, not observed Sendblue payload
 contracts. They preserve unknown fields through the generic operational parser
 and should be replaced or supplemented when real callbacks are captured.
+
+`typing_indicator` requires special caution: Sendblue's public docs list it as
+an inbound webhook type, and the local route/parser are implemented, but live
+webhook registration has been observed rejecting `type: "typing_indicator"` and
+dropping it from full webhook updates. Treat inbound typing payload shape as
+unconfirmed until a real callback is captured from an account where
+registration persists.
 
 ## Focused Captures
 

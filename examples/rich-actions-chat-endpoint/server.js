@@ -89,7 +89,8 @@ function actionsResponse(body) {
       actions: [
         {
           type: 'reply',
-          content: 'This rich action is meant to thread against your last inbound message.',
+          content:
+            'Reply intent targets your last inbound message. Current Sendblue direct sends deliver this as a normal message fallback.',
           target
         }
       ]
@@ -184,8 +185,8 @@ function xmlTaggedResponse(body) {
         ? `<reaction type="love" target_message_handle="${target}" />`
         : '<reaction type="love" target="latest" />',
       target
-        ? `<reply target_message_handle="${target}"><message>XML-tagged contextual reply.</message></reply>`
-        : '<reply target="latest"><message>XML-tagged contextual reply.</message></reply>'
+        ? `<reply target_message_handle="${target}"><message>XML-tagged reply intent delivered as a normal message fallback.</message></reply>`
+        : '<reply target="latest"><message>XML-tagged reply intent delivered as a normal message fallback.</message></reply>'
     ].join('\n')
   };
 }

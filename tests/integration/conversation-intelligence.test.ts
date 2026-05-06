@@ -221,6 +221,43 @@ describe('conversation intelligence', () => {
     });
   });
 
+  it('attaches inbound typing to an existing conversation even if number fields are reversed', async () => {
+    chatClient.responses.push({ silence: true }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'typing-seed', content: 'seed' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/typing-indicator',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: {
+        number: '+15552220000',
+        from_number: '+15551110001',
+        is_typing: true,
+        timestamp: '2026-05-06T12:01:00.000Z'
+      }
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'typing-reversed-next', content: 'after typing' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(chatClient.calls[1].typing).toMatchObject({
+      isTyping: true,
+      timestamp: '2026-05-06T12:01:00.000Z'
+    });
+  });
+
   it('enriches chat requests with optional resolver identity and fails open', async () => {
     const resolver: IdentityResolver = {
       resolveByPhone: vi
@@ -394,6 +431,28 @@ describe('conversation intelligence', () => {
 
     expect(sendblueClient.reactionCalls).toEqual([{ messageHandle: 'react-target-1', reaction: 'love' }]);
     expect(sendblueClient.calls.map(call => call.content)).toEqual(['after reaction']);
+  });
+
+  it('preserves reply intent in the chat contract but sends a normal Sendblue direct message', async () => {
+    chatClient.responses.push({
+      actions: [{ type: 'reply', target: { alias: 'last' }, content: 'plain Sendblue fallback reply' }]
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'reply-target-1', content: 'reply to me' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendblueClient.calls).toEqual([
+      {
+        toNumber: '+15551110001',
+        content: 'plain Sendblue fallback reply',
+        statusCallback: 'https://agent.example.test/webhook/status'
+      }
+    ]);
   });
 
   it('treats group replies or tapbacks to known agent outbound handles as addressed', async () => {

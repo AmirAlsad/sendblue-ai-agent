@@ -73,6 +73,12 @@ Message actions use these fields:
   Message handles are preferred; aliases and content matching are convenience
   selectors.
 
+`reply` actions preserve contextual intent in the chat contract. Current
+Sendblue direct message sends do not expose a native reply target parameter, so
+direct replies are delivered as normal Sendblue messages after logging the
+target. This keeps model/application intent visible without pretending the
+recipient will see a native iMessage reply bubble.
+
 The agent remains responsible for Sendblue transport details such as
 `from_number`, `status_callback`, ordered delivery, SMS downgrade suppression,
 and direct-vs-group routing. Chat endpoints should not construct Sendblue API
@@ -137,8 +143,9 @@ Rich capability rollout knobs:
 - `CHAT_RESPONSE_MESSAGE_TAG`, `CHAT_RESPONSE_NO_RESPONSE_TAG`,
   `CHAT_RESPONSE_REACTION_TAG`, and `CHAT_RESPONSE_REPLY_TAG` - configurable tag
   names for the compatibility parser.
-- `READ_RECEIPTS_ENABLED` - allows direct iMessage/RCS read receipts when
-  Sendblue support is confirmed, default `false`.
+- `READ_RECEIPTS_ENABLED` - allows best-effort direct iMessage/RCS
+  `POST /api/mark-read` calls when Sendblue account support is enabled, default
+  `false`. Status callbacks do not include a `READ` state.
 - `READ_RECEIPT_DEBOUNCE_MS` - debounce before read receipt send, default `250`.
 - `TYPING_REFRESH_INTERVAL_MS` - interval for repeated typing refreshes during
   long-running responses, default `5000`.
@@ -155,9 +162,11 @@ Sendblue behavior that cannot be simulated locally:
 
 - Hosted media is reachable by Sendblue and delivered to Messages.app.
 - `sendStyle` produces the intended iMessage effect or degrades safely.
-- Tapback/reaction and reply targets work with captured Sendblue identifiers.
-- Read receipts are supported before `READ_RECEIPTS_ENABLED` is used
-  in production.
+- Tapback/reaction targets work with captured Sendblue identifiers.
+- Reply intent degrades to a normal Sendblue message until Sendblue exposes a
+  native direct-reply send API.
+- Read receipts are supported by the Sendblue account and visibly displayed
+  before `READ_RECEIPTS_ENABLED` is used in production.
 - Typing refreshes do not continue after a terminal response or SMS downgrade.
 - Addressed group replies route only to the intended `group_id`.
 

@@ -48,13 +48,13 @@ const richScenarios: RichScenario[] = [
     id: 'reply',
     actionTypes: ['reply'],
     requiresLiveSendblue: true,
-    safetyGate: 'reply target maps to a Sendblue-supported message selector'
+    safetyGate: 'reply intent degrades to a normal Sendblue message until native reply API exists'
   },
   {
     id: 'read-receipt',
     actionTypes: ['agent_read_receipt'],
     requiresLiveSendblue: true,
-    safetyGate: 'READ_RECEIPTS_ENABLED gates the agent behavior until observed'
+    safetyGate: 'READ_RECEIPTS_ENABLED gates best-effort mark-read calls until on-device display is verified'
   },
   {
     id: 'typing-refresh',

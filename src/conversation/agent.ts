@@ -210,11 +210,24 @@ export class ConversationAgent {
   }
 
   async handleTyping(input: TypingWebhookInput): Promise<{ ok: true; conversationKey: string }> {
-    const key = directConversationKey(input.fromNumber, input.number);
-    const existing = withConversationDefaults(await this.deps.store.getConversation(key));
+    const forwardKey = directConversationKey(input.fromNumber, input.number);
+    const reverseKey = directConversationKey(input.number, input.fromNumber);
+    const configuredLineNumber = this.deps.config.sendblueFromNumber;
+    const configuredKey =
+      input.fromNumber === configuredLineNumber
+        ? forwardKey
+        : input.number === configuredLineNumber
+          ? reverseKey
+          : undefined;
+    const existingForward = withConversationDefaults(await this.deps.store.getConversation(forwardKey));
+    const existingReverse = withConversationDefaults(await this.deps.store.getConversation(reverseKey));
+    const key = existingForward ? forwardKey : existingReverse ? reverseKey : configuredKey ?? forwardKey;
+    const existing = existingForward ?? existingReverse;
+    const lineNumber = key === reverseKey ? input.number : input.fromNumber;
+    const phoneNumber = key === reverseKey ? input.fromNumber : input.number;
     const typing: ConversationTypingState = {
-      number: input.number,
-      fromNumber: input.fromNumber,
+      number: phoneNumber,
+      fromNumber: lineNumber,
       isTyping: input.isTyping,
       timestamp: input.timestamp,
       receivedAt: this.nowIso()
@@ -224,8 +237,8 @@ export class ConversationAgent {
       existing ??
       createIdleConversation({
         key,
-        lineNumber: input.fromNumber,
-        phoneNumber: input.number,
+        lineNumber,
+        phoneNumber,
         channel: 'imessage',
         typing,
         now: this.nowMs()

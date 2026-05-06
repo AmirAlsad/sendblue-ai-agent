@@ -42,14 +42,14 @@ Important API assumptions:
 
 - The package assumes a dedicated Sendblue line. Shared numbers are not supported.
 - Sendblue has no inbound webhook simulator or sandbox-to-sandbox iMessage flow. Real-device E2E testing is load-bearing.
-- Webhook types include `receive`, `outbound`, `typing_indicator`, `call_log`, `line_blocked`, `line_assigned`, and `contact_created`.
+- Webhook types documented by Sendblue include `receive`, `outbound`, `typing_indicator`, `call_log`, `line_blocked`, `line_assigned`, and `contact_created`. Treat `typing_indicator` as account/API-gated until live registration is verified; observed live webhook APIs may reject or drop it even though the docs list it.
 - Sendblue retries webhooks up to 3 times on 5xx responses with a 45-second timeout. Deduplicate on `message_handle`.
 - Status callbacks use `REGISTERED`, `PENDING`, `DECLINED`, `QUEUED`, `ACCEPTED`, `SENT`, `DELIVERED`, and `ERROR`. Do not rely on `READ`.
 - `status_callback` must be passed on each `send-message` request; there is no global default.
 - Ordered delivery is channel-aware: iMessage/RCS queues advance on `DELIVERED`; SMS and downgraded conversations advance on `SENT`.
 - The webhook secret header name is undocumented. Keep it configurable and confirm from a captured real webhook before enforcing in production.
 - Important error codes include `4000`, `4001`, `4002`, `5000`, `5003`, `5509`, `10001`, `10002`, and `SMS_LIMIT_REACHED`.
-- Sendblue typing indicators are direct iMessage-only. Do not send typing indicators or typing refreshes for SMS, downgraded conversations, or unaddressed groups.
+- Sendblue outbound typing indicators are direct iMessage-only. Do not send typing indicators or typing refreshes for SMS, downgraded conversations, or unaddressed groups. Inbound typing state depends on successfully registering the documented `typing_indicator` webhook for the account/line.
 - iMessage-only rich actions such as send effects, reactions, replies, read receipts, and typing refreshes must be suppressed or safely degraded for SMS and downgraded conversations.
 - Group receives are silent unless addressed to `AGENT_DISPLAY_NAME`, a best-effort Tapback/reply references a known agent outbound, or future payloads include explicit reply metadata targeting the agent. Acknowledge, dedupe, preserve/log metadata, and only reply by `group_id` for addressed inbound-initiated groups.
 

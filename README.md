@@ -36,10 +36,13 @@ SMS/downgraded queues advance on `SENT`.
 
 The rich capability contract keeps the v0.2 `message`, `messages`, and
 `silence` response forms, and adds `actions[]` for hosted media, send effects,
-reactions, contextual replies, silence, and addressed group replies. Read
-receipts and typing refreshes are handled by the agent around chat processing
-and ordered delivery. XML-style tags are documented as a compatibility layer for chat
-endpoints that produce tagged text instead of structured JSON.
+reactions, reply intent, silence, and addressed group replies. Direct reply
+intent is preserved for chat endpoints but currently sends as a normal Sendblue
+message because Sendblue direct sends do not expose a native reply target
+parameter. Read receipts and typing refreshes are best-effort agent-side API
+calls around chat processing and ordered delivery. XML-style tags are documented
+as a compatibility layer for chat endpoints that produce tagged text instead of
+structured JSON.
 
 Direct conversations are keyed as `direct:{sendblueLine}:{phoneNumber}`. Group
 messages are silent unless the message is addressed to `AGENT_DISPLAY_NAME` or
@@ -113,7 +116,8 @@ Optional for rich Sendblue actions:
 - `CHAT_RESPONSE_NO_RESPONSE_TAG` (defaults to `no_response`)
 - `CHAT_RESPONSE_REACTION_TAG` (defaults to `reaction`)
 - `CHAT_RESPONSE_REPLY_TAG` (defaults to `reply`)
-- `READ_RECEIPTS_ENABLED` (defaults to `false`)
+- `READ_RECEIPTS_ENABLED` (defaults to `false`; gates best-effort
+  `POST /api/mark-read` calls and does not create a `READ` status callback)
 - `READ_RECEIPT_DEBOUNCE_MS` (defaults to `250`)
 - `TYPING_REFRESH_INTERVAL_MS` (defaults to `5000`)
 - `TYPING_REFRESH_MAX_MS` (defaults to `120000`)
@@ -128,6 +132,14 @@ Required only for E2E:
 - `E2E_MESSAGES_DB_PATH` (optional, defaults to `~/Library/Messages/chat.db`)
 - `NGROK_AUTHTOKEN`
 - `NGROK_DOMAIN` (optional, for a reserved stable ngrok domain)
+- `SHOWCASE_MEDIA_URL` (optional public HTTPS asset for `showcase:e2e`)
+- `SHOWCASE_READ_TYPING_DELAY_MS` (optional slow response delay for the
+  read-receipt/typing showcase step; defaults to `15000`)
+- `SHOWCASE_BUFFER_BASE_TIMEOUT_MS`, `SHOWCASE_BUFFER_GROWTH_FACTOR`,
+  `SHOWCASE_BUFFER_MAX_TIMEOUT_MS`, and `SHOWCASE_BUFFER_NOISE_MAX_DEVIATION`
+  tune the live buffering demo without changing normal agent buffer settings.
+- `SHOWCASE_TYPING_REFRESH_INTERVAL_MS` and `SHOWCASE_TYPING_REFRESH_MAX_MS`
+  tune the dedicated outbound typing demo.
 
 Run `npm run setup:e2e` to create a local gitignored `.env` file if one does
 not already exist. The repo scripts load `.env` for both agent and real-device
@@ -158,6 +170,7 @@ npm run verify:e2e
 npm run dev:e2e
 npm run capture:fixtures
 npm run capture:guided
+npm run showcase:e2e
 ```
 
 `setup:e2e` creates `.env` if needed. `verify:e2e` checks the ngrok auth token,
@@ -181,6 +194,22 @@ active scenario before being written to `.captures/sendblue/`.
 Use `npm run capture:guided -- --list` to show scenario IDs, or run a focused
 capture with `npm run capture:guided -- --only tapback-custom-emoji,group-message`.
 Observed payload structures are summarized in `docs/SENDBLUE-PAYLOAD-STRUCTURES.md`.
+
+`showcase:e2e` starts a live scenario-aware chat endpoint, the agent, ngrok,
+and managed Sendblue webhooks, then sends guided prompts to
+`E2E_TEST_DEVICE_NUMBER`. Each step asks for a user action and the agent replies
+with what it understood. It writes raw webhook captures and `summary.json` under
+`.captures/sendblue-showcase/<session>/`. Reply `skip` to move past optional
+group, SMS, custom Tapback, or hosted-media steps. Set `SHOWCASE_MEDIA_URL` to
+make the outbound media step send a real hosted asset. The runner also attempts
+to register and verify Sendblue's documented `typing_indicator` webhook; if the
+live account API rejects or drops it, the diagnostic is written to `summary.json`
+and outbound typing indicators are still exercised.
+
+Treat `typing_indicator` as documented but not universally available until the
+account's webhook API accepts and persists it. The package keeps the local route,
+parser, and chat request enrichment in place so deployments can use inbound
+typing when Sendblue enables or exposes the webhook type for the line.
 
 `test:e2e` also starts its own ngrok SDK tunnel and registers Sendblue webhooks
 unless `E2E_PUBLIC_BASE_URL` is set to an externally managed URL. Rich action

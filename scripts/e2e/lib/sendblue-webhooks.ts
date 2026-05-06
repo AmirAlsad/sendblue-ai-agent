@@ -181,6 +181,7 @@ function toReplacePayload(payload: unknown, desired: DesiredSendblueWebhook[]): 
 }
 
 function toWebhookValue(webhook: DesiredSendblueWebhook): SendblueWebhookValue {
+  if (webhook.type === 'contact_created') return webhook.url;
   if (!webhook.secret) return webhook.url;
   return {
     url: webhook.url,

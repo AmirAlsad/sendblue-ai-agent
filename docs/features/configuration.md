@@ -77,7 +77,10 @@ Optional identity and typing:
 
 - `USER_LOOKUP_URL` - HTTP resolver used to enrich chat requests with `{ userId, data }`.
 - `OUTBOUND_TYPING_INDICATORS_ENABLED` - sends best-effort Sendblue typing indicators for direct iMessage conversations, default `true`.
-- `INBOUND_TYPING_STATE_ENABLED` - stores inbound typing webhooks for inclusion in the next chat request, default `true`.
+- `INBOUND_TYPING_STATE_ENABLED` - stores inbound typing webhooks for inclusion
+  in the next chat request, default `true`. This only has live effect when the
+  Sendblue account/line can register and receive the documented
+  `typing_indicator` webhook type.
 
 Optional rich actions:
 
@@ -86,7 +89,9 @@ Optional rich actions:
 - `CHAT_RESPONSE_NO_RESPONSE_TAG` - silence tag name, default `no_response`.
 - `CHAT_RESPONSE_REACTION_TAG` - reaction tag name, default `reaction`.
 - `CHAT_RESPONSE_REPLY_TAG` - reply tag name, default `reply`.
-- `READ_RECEIPTS_ENABLED` - allows direct iMessage/RCS read receipts after Sendblue support is confirmed for the deployed line, default `false`.
+- `READ_RECEIPTS_ENABLED` - allows best-effort direct iMessage/RCS
+  `POST /api/mark-read` calls after Sendblue account support is confirmed for
+  the deployed line, default `false`. Status callbacks do not include `READ`.
 - `READ_RECEIPT_DEBOUNCE_MS` - read receipt debounce before chat processing, default `250`.
 - `TYPING_REFRESH_INTERVAL_MS` - refresh interval for repeated outbound typing indicators while a long-running response is in progress, default `5000`.
 - `TYPING_REFRESH_MAX_MS` - maximum typing refresh duration, default `120000`.

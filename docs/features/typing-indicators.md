@@ -2,9 +2,11 @@
 
 ## What it does
 
-Supports Sendblue typing indicators in both directions: outbound best-effort
-typing signals before the chat endpoint is called, and inbound typing state that
-is included in the next direct-message chat request.
+Supports outbound Sendblue typing indicators and local ingestion for Sendblue's
+documented inbound typing webhook. Outbound typing is an API call the agent can
+make during processing. Inbound typing state is included in the next
+direct-message chat request only when the account/line can actually register and
+receive `typing_indicator` webhooks.
 
 ## How it works
 
@@ -31,20 +33,16 @@ endpoint or message delivery. SMS/downgraded conversations suppress outbound
 typing indicators because iMessage-only affordances should not be shown after
 SMS fallback.
 
-Rich `actions[]` responses can also request a typing refresh:
-
-```json
-{ "type": "typing", "refresh": true, "durationMs": 3000 }
-```
-
-Typing refreshes follow the same direct iMessage-only gate as normal outbound
-typing indicators. They should stop as soon as the response is complete, the
-conversation downgrades to SMS, a terminal send status arrives, or a newer
-inbound message interrupts the current response.
+Typing refreshes are agent-controlled, not requested by rich `actions[]`.
+During processing, the agent sends an initial typing indicator and then refreshes
+on `TYPING_REFRESH_INTERVAL_MS` until the response completes, the conversation
+downgrades to SMS, a terminal send status arrives, or a newer inbound message
+interrupts the current response.
 
 ### Inbound typing
 
-Sendblue `typing_indicator` webhooks are accepted at
+Sendblue documents `typing_indicator` as the inbound typing webhook type. The
+local agent accepts it at
 `POST /webhook/typing-indicator` and parsed from:
 
 - `number`
@@ -68,6 +66,24 @@ message request includes:
 ```
 
 If no typing state is available, `typing` is `null`.
+
+### Live registration status
+
+Do not assume inbound typing callbacks are available just because the parser and
+route exist locally. In live testing on May 6, 2026, Sendblue's webhook API
+rejected `POST /api/account/webhooks` with `type: "typing_indicator"` and an
+allowed-type list that omitted `typing_indicator`. A full webhook `PUT` returned
+success but did not persist the `typing_indicator` entry on the follow-up
+`GET /api/account/webhooks`.
+
+The current interpretation is:
+
+- Outbound `/api/send-typing-indicator` exists and can be exercised as a
+  best-effort direct iMessage API call.
+- Inbound `typing_indicator` is documented and locally supported, but may be
+  account/API-gated or unavailable for some Sendblue accounts.
+- E2E and production setup must verify registration persistence before claiming
+  inbound typing support for a deployment.
 
 ## Code files
 
@@ -97,7 +113,11 @@ If no typing state is available, `typing` is `null`.
 - Inbound typing can create an idle conversation record so the next message has
   context, but it does not call the chat endpoint without a receive webhook.
 - Outbound typing is best effort and currently has no retry/backoff policy.
+- Some live Sendblue account webhook APIs may reject or fail to persist
+  `typing_indicator` webhook registration even though the public docs list it as
+  supported. Local ingestion remains implemented, but real inbound typing
+  capture depends on account/API behavior.
 - The implementation assumes typing indicators are useful only for active
   iMessage direct conversations.
-- Typing refreshes are a rich action hint, not a guarantee that Sendblue or
-  Messages.app will display continuous typing.
+- Typing refresh API success is not a guarantee that Messages.app visibly
+  displays continuous typing.

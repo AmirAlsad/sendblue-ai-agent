@@ -70,7 +70,8 @@ coordinate more than one process.
   request; there is no assumed global callback.
 - Typing indicators are best effort and only emitted for direct iMessage
   conversations that are not SMS-downgraded.
-- Inbound typing state is stored and included in the next chat request; typing
+- Inbound typing state is stored and included in the next chat request when the
+  account can register Sendblue's documented `typing_indicator` webhook; typing
   events alone do not call the chat endpoint.
 - Identity resolution is optional and fail-open.
 

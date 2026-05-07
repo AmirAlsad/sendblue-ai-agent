@@ -73,15 +73,32 @@ the production path for durable buffering, dedupe, and queue state.
 
 ## Examples
 
-Runnable local examples live in [examples](examples/):
+Try any of the examples in one command — no Sendblue account or device required:
 
-- `examples/minimal-chat-endpoint` - smallest possible `CHAT_ENDPOINT_URL`.
-- `examples/identity-lookup` - optional `USER_LOOKUP_URL` resolver.
-- `examples/v02-rich-chat-endpoint` - consumes buffered messages, conversation
-  metadata, identity, typing state, and SMS downgrade state.
-- `examples/rich-actions-chat-endpoint` - demonstrates `actions[]`, XML tag
-  compatibility, silence, reactions, replies, hosted media, send effects, and
-  addressed group behavior.
+```bash
+npm run example:chat -- action-catalog        # every action type
+npm run example:chat -- scripted-flow         # pizza pickup state machine
+npm run example:chat -- minimal-chat-endpoint # echo bot
+npm run example:chat -- showcase-bot          # LLM-backed (needs ANTHROPIC_API_KEY)
+```
+
+The CLI boots the example in a child process and drops you into a REPL.
+See [examples/README.md](examples/README.md) for the full tour, the REPL
+commands (`/sms`, `/reset`, `/raw`), and how to graduate to the full
+hardware loop with `npm run dev:e2e`.
+
+Examples in [`examples/`](examples/):
+
+- `minimal-chat-endpoint` — smallest possible `CHAT_ENDPOINT_URL` echo bot.
+- `identity-lookup` — optional `USER_LOOKUP_URL` resolver.
+- `action-catalog` — one labeled handler per chat action type (`message`,
+  `media`, `reply`, `reaction`, `silence`, send effects, group routing, SMS
+  fallback) plus an XML-tag mode.
+- `scripted-flow` — deterministic pizza pickup state machine that walks
+  through every action type as a real conversation arc, no LLM.
+- `showcase-bot` — reference architecture for a real LLM-backed bot.
+  Multi-provider via Vercel AI SDK; tools build the `actions[]` chat
+  contract directly. Lives in its own `package.json`.
 
 ## Environment
 

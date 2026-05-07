@@ -1,155 +1,141 @@
 # sendblue-ai-agent examples
 
-These examples are small Express services you can run next to the agent while
-developing locally. They use only dependencies already installed by the root
-package.
+A guided tour of how to wire a chat endpoint and identity resolver to the
+agent. Walk top to bottom — each example is meant to be read after the
+ones above it.
 
-## Minimal Chat Endpoint
+| Example                                                  | When to use it                                                       |
+| -------------------------------------------------------- | -------------------------------------------------------------------- |
+| [`minimal-chat-endpoint/`](./minimal-chat-endpoint/)     | You're wiring `CHAT_ENDPOINT_URL` for the first time                 |
+| [`identity-lookup/`](./identity-lookup/)                 | You need to enrich incoming chats with a `USER_LOOKUP_URL` lookup    |
+| [`action-catalog/`](./action-catalog/)                   | You want to see every chat action type in a single labeled handler   |
+| [`scripted-flow/`](./scripted-flow/)                     | You want a realistic conversation arc without an LLM                 |
+| [`showcase-bot/`](./showcase-bot/)                       | You're forking a starting point for a real LLM-backed bot            |
 
-Use this when you want the fastest possible `CHAT_ENDPOINT_URL` target.
+Examples 1–4 are zero-dependency Express scripts using only what the root
+`package.json` already installs. Example 5 (`showcase-bot/`) has its own
+`package.json` and pulls in Vercel AI SDK + Anthropic/OpenAI/Groq.
+
+## Try an example in 60 seconds
+
+```bash
+git clone <this repo>
+cd sendblue-ai-agent
+npm install
+npm run example:chat -- action-catalog
+```
+
+That's the whole onboarding. `npm run example:chat -- <name>` boots the
+example in a child process, waits for it to be healthy, and drops you into
+a REPL that POSTs each line to `/chat` and pretty-prints the response. No
+Sendblue account, no ngrok, no real iMessage device — pure local loop.
+
+Available CLI targets: `minimal-chat-endpoint`, `action-catalog`,
+`scripted-flow`, `showcase-bot`. (`identity-lookup` answers a different
+route — see [`identity-lookup/`](./identity-lookup/) for how to run it
+alongside one of the chat examples.)
+
+```text
+> hello
+  message: Hi! How can I help?
+> react to my last message with a heart
+  reaction: love → m-1759-3
+> /sms on
+  smsDowngraded: true
+> react with a heart
+  message: Tapback reactions are iMessage-only; this conversation is SMS/downgraded.
+> /reset
+> /exit
+```
+
+REPL commands: `/sms on|off` simulates an SMS-downgraded conversation,
+`/reset` generates a fresh `conversationKey` (clears bot memory),
+`/raw` toggles the full JSON response, `/exit` quits.
+
+For the **full hardware loop** — real iMessage device, real Sendblue line,
+real webhooks via ngrok — use `npm run dev:e2e`. The full set of E2E
+commands (`setup:e2e`, `verify:e2e`, `dev:e2e`, `sendblue:webhooks`,
+`showcase:e2e`, `probe:sendblue`) is listed in the top-level `README.md`.
+
+For `showcase-bot` you also need an Anthropic key:
+
+```bash
+cp examples/showcase-bot/.env.example examples/showcase-bot/.env
+# add ANTHROPIC_API_KEY to that file
+npm run example:chat -- showcase-bot
+```
+
+The CLI checks for the key before booting and tells you exactly what's
+missing.
+
+## 1 · `minimal-chat-endpoint` — hello world
+
+A 30-line Express server that echoes the inbound message. Use it as the
+fastest possible target while you bring up the agent locally.
 
 ```bash
 node examples/minimal-chat-endpoint/server.js
-```
-
-Then set:
-
-```bash
+# then
 CHAT_ENDPOINT_URL=http://localhost:4001/chat
 ```
 
-The endpoint returns `{ message: "Echo: <message>" }`, which exercises the
-backward-compatible single-message response shape.
+## 2 · `identity-lookup` — user enrichment
 
-## Identity Lookup Endpoint
-
-Use this to test `USER_LOOKUP_URL` and the `identity` object included in v0.2
-chat requests.
+A stub for `USER_LOOKUP_URL` that returns a hardcoded identity for two
+phone numbers. Run alongside any chat endpoint to see the `identity` block
+appear in chat requests.
 
 ```bash
 node examples/identity-lookup/server.js
-```
-
-Then set:
-
-```bash
+# then
 USER_LOOKUP_URL=http://localhost:4002/lookup
 ```
 
-The sample resolver accepts the current resolver request shape:
+## 3 · `action-catalog` — every action type
 
-```json
-{
-  "resolveBy": "phone",
-  "value": "+15551234567",
-  "phoneNumber": "+15551234567",
-  "lineNumber": "+15557654321",
-  "conversationKey": "direct:+15557654321:+15551234567"
-}
-```
-
-It returns `{ "userId": "...", "data": { ... } }` for known numbers and `null`
-for unknown numbers.
-
-## v0.2 Rich Chat Endpoint
-
-Use this when you want to see how a real application can consume buffered
-messages, conversation metadata, resolved identity, inbound typing state, and
-SMS downgrade state.
-
-Inbound typing state appears only when Sendblue delivers the documented
-`typing_indicator` webhook. Some live accounts may reject or fail to persist
-that webhook type during registration, so examples should treat `typing` as
-optional metadata.
+One endpoint, one handler per action type (`message`, `media`, `reply`,
+`reaction`, `silence`, `sendStyle`, group routing, SMS fallback). Mirrors
+the scenarios that `npm run showcase:e2e` exercises. Append `?mode=xml` to
+see the same content rendered as XML tags for the legacy parser path.
 
 ```bash
-node examples/v02-rich-chat-endpoint/server.js
-```
-
-Then set:
-
-```bash
+node examples/action-catalog/server.js
+# then
 CHAT_ENDPOINT_URL=http://localhost:4003/chat
 ```
 
-Useful prompts to send from the device:
+## 4 · `scripted-flow` — a real conversation, no LLM
 
-- `silence` returns `{ silence: true }`.
-- `multi` returns multiple ordered replies.
-- `human` returns a handoff-style reply.
-- Any other input returns one reply that uses the v0.2 request context.
-
-## Rich Actions Chat Endpoint
-
-Use this with a rich-capable runtime when you want the chat endpoint to return
-structured Sendblue actions instead of plain strings.
+A pizza pickup state machine keyed by `conversation.key`. Walks through
+greet → size → toppings → name → pickup, naturally hitting reactions,
+replies, media, send effects, and silence as the conversation progresses.
 
 ```bash
-node examples/rich-actions-chat-endpoint/server.js
+node examples/scripted-flow/server.js
+# then
+CHAT_ENDPOINT_URL=http://localhost:4005/chat
 ```
 
-Then set:
+## 5 · `showcase-bot` — fork-this-for-a-real-bot
+
+LLM-backed via Vercel AI SDK. The model returns the `actions[]` chat
+contract through five tools (`send_message`, `send_media`, `react`,
+`reply_to`, `stay_silent`). Handles inbound media: images go multimodal,
+PDFs are extracted, vCards are parsed, audio is transcribed via Groq.
+Multi-provider — swap `model:` in `config.yaml` between Anthropic and
+OpenAI.
 
 ```bash
-CHAT_ENDPOINT_URL=http://localhost:4004/chat
+cd examples/showcase-bot
+npm install
+cp .env.example .env  # fill in ANTHROPIC_API_KEY
+npm run dev
+# then
+CHAT_ENDPOINT_URL=http://localhost:4006/chat
 ```
 
-Useful prompts to send from the device:
+## Running examples in parallel
 
-- `multi` returns two ordered `{ type: "message" }` actions.
-- `silence` returns a rich `{ type: "silence" }` action.
-- `reaction` returns a love reaction targeting the latest inbound message, or
-  a plain fallback if the conversation is SMS/downgraded.
-- `reply` returns a reply-intent action targeting the latest inbound message.
-  Current Sendblue direct sends do not expose a native reply target parameter,
-  so the agent preserves the intent and delivers a normal message fallback.
-- `media` returns a hosted media message using `HOSTED_MEDIA_BASE_URL`.
-- `effect` returns a message with `sendStyle: "celebration"`, or a plain
-  fallback if the conversation is SMS/downgraded.
-- `receipt` returns a normal message; read receipts are controlled by
-  `READ_RECEIPTS_ENABLED` in the agent, not by chat actions.
-- `typing` returns a normal message; typing refreshes are controlled by the
-  agent while the chat request and outbound queue are active.
-- `sb-agent group` returns a group reply only when the inbound request has group
-  metadata and mentions `AGENT_DISPLAY_NAME`.
-
-Set `CHAT_ENDPOINT_URL=http://localhost:4004/chat?mode=xml` to return XML-style
-Sendblue tags in the legacy top-level `message` field. The XML mode demonstrates
-multi-message tags, media, send effects, reactions, reply-intent fallback, and
-silence.
-
-## Live Showcase Endpoint
-
-`npm run showcase:e2e` starts its own scenario-aware chat endpoint instead of
-using one of the standalone example servers. It is meant for a real Sendblue
-line and `E2E_TEST_DEVICE_NUMBER`: the script sends guided prompts, the local
-endpoint returns rich responses for each scenario, and the agent replies with an
-echo of what it understood.
-
-The live prompts are conversational and do not require copying hidden scenario
-tokens. The runner maps each inbound webhook to the active step and writes the
-actual chat request evidence to `summary.json`.
-
-Set `SHOWCASE_MEDIA_URL` to a public HTTPS asset if the outbound media step
-should send hosted media. Without it, the script still runs and the media step
-explains that hosted media was skipped. Captures and `summary.json` are written
-under `.captures/sendblue-showcase/<session>/`.
-
-The live showcase uses `SHOWCASE_*` timing settings for the buffering and
-typing demos so normal `.env` runtime values do not make the interaction too
-tight. The defaults intentionally use a longer buffer quiet window and a longer
-read/typing processing pause than the production examples.
-
-## Run Examples Locally
-
-Use separate terminals:
-
-```bash
-node examples/minimal-chat-endpoint/server.js
-node examples/identity-lookup/server.js
-node examples/v02-rich-chat-endpoint/server.js
-node examples/rich-actions-chat-endpoint/server.js
-```
-
-Only one chat endpoint should be assigned to `CHAT_ENDPOINT_URL` at a time. The
-identity lookup service can run alongside either chat endpoint.
+Use separate terminals. Only one chat endpoint should be assigned to
+`CHAT_ENDPOINT_URL` at a time. The identity lookup runs alongside any of
+the chat endpoints.

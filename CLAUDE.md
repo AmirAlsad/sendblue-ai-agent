@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Scope
 
-`sendblue-ai-agent` is a transport/orchestration package — Sendblue webhook ingestion, outbound delivery, status tracking, dedupe, conversation buffering, and ordered delivery for an iMessage AI agent. The developer brings their own HTTP chat endpoint. Do not couple to a model provider, add LLM-specific assumptions to the contract, or pull OpenAI/Anthropic/etc. SDKs into examples.
+`sendblue-ai-agent` is a transport/orchestration package — Sendblue webhook ingestion, outbound delivery, status tracking, dedupe, conversation buffering, and ordered delivery for an iMessage AI agent. The developer brings their own HTTP chat endpoint. The transport package itself stays model-provider-free: do not couple `src/` to a model provider, add LLM-specific assumptions to the chat contract, or pull OpenAI/Anthropic/etc. SDKs into the root `package.json`. Example subdirectories under `examples/` with their own `package.json` may bring any provider — `examples/showcase-bot/` is the canonical case.
 
 `AGENTS.md` is the durable project guidance (intent, version roadmap, Sendblue constraints, testing strategy, implementation rules). Read it before non-trivial changes — it lists API quirks (status callbacks, downgrades, group routing, error codes) that the code intentionally relies on.
 

@@ -211,9 +211,8 @@ Promote a scenario to real-device E2E only after confirming these expectations:
   `AGENT_DISPLAY_NAME`, references a known agent outbound, or future payloads
   include explicit reply metadata for the agent.
 
-Use `examples/rich-actions-chat-endpoint` as the deterministic chat endpoint
-when manually exercising `actions[]` or XML tag compatibility in a rich-capable
-runtime.
+Use `examples/action-catalog` as the deterministic chat endpoint when manually
+exercising `actions[]` or XML tag compatibility in a rich-capable runtime.
 
 ## Captured Fixtures
 

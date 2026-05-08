@@ -48,7 +48,18 @@ class FakeSendblueClient implements SendblueClient {
 
   async sendReaction(reaction: SendblueReactionRequest): Promise<SendblueActionResult> {
     this.reactionCalls.push(reaction);
-    return { status: 'OK', reaction: reaction.reaction, raw: { ok: true } };
+    // Mirror production: Sendblue's send-reaction endpoint returns a
+    // message_handle on success even though no DELIVERED/SENT status
+    // callback is ever emitted for it. This fake's previous shape (no
+    // handle) accidentally hid a real bug where the agent would map the
+    // returned handle and stall the queue waiting 30s for a status
+    // callback that never arrives.
+    return {
+      status: 'OK',
+      reaction: reaction.reaction,
+      messageHandle: `reaction-handle-${this.reactionCalls.length}`,
+      raw: { ok: true }
+    };
   }
 
   async markRead(receipt: SendblueMarkReadRequest): Promise<SendblueActionResult> {
@@ -571,6 +582,37 @@ describe('conversation intelligence', () => {
         statusCallback: 'https://agent.example.test/webhook/status'
       }
     ]);
+  });
+
+  it('advances the queue immediately after a reaction without waiting for a status callback', async () => {
+    // Sendblue's /api/send-reaction does not emit DELIVERED/SENT status
+    // callbacks. If the agent tracks the returned message_handle the way
+    // it does for normal sends, the next outbound stalls until
+    // OUTBOUND_DELIVERY_TIMEOUT_MS fires (default 30s). This test pins the
+    // fix: the message after a reaction must go out within the same
+    // synchronous tick as the chat response.
+    chatClient.responses.push({
+      actions: [
+        { type: 'reaction', reaction: 'like', target: { alias: 'last' } },
+        { type: 'message', content: 'follow-up' }
+      ]
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [config.sendblueWebhookSecretHeader]: config.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'react-no-stall-1' })
+    });
+
+    // Buffer flush plus a single async tick — enough for the chat response
+    // to come back, the reaction to send, and the queue to advance to the
+    // follow-up message. Crucially, far less than the 30s delivery timeout.
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sendblueClient.reactionCalls).toHaveLength(1);
+    expect(sendblueClient.calls.map(call => call.content)).toEqual(['follow-up']);
   });
 
   it('resolves reaction targets to inbound message handles and continues the queue', async () => {

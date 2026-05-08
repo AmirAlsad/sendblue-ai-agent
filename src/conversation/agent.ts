@@ -280,6 +280,21 @@ export class ConversationAgent {
     const channel = channelFromStatus(update, state.channel);
     const nextState = this.applyChannel(state, channel, update.wasDowngraded === true);
 
+    // Surface every callback for the active sending queue at info. Lets
+    // operators see when DELIVERED/SENT actually arrive vs. when the agent
+    // sent the message — useful when ordered-delivery gaps look anomalous.
+    this.deps.logger.info(
+      {
+        conversationKey: mapping.conversationKey,
+        messageHandle: update.messageHandle,
+        status: update.status,
+        channel: nextState.channel,
+        smsDowngraded: nextState.smsDowngraded,
+        errorCode: update.errorCode
+      },
+      'status callback received'
+    );
+
     if (update.status === 'ERROR' || update.status === 'DECLINED') {
       await this.abortQueue(nextState, update.messageHandle);
       return { ok: true, record, queued: true };
@@ -597,11 +612,18 @@ export class ConversationAgent {
       return undefined;
     }
 
-    return client.sendReaction({
+    const result = await client.sendReaction({
       messageHandle,
       reaction: item.reaction as SendblueReactionRequest['reaction'],
       partIndex: item.partIndex
     });
+    // Drop the returned messageHandle. Sendblue's send-reaction endpoint
+    // does not emit status callbacks (no DELIVERED/SENT/etc on reactions),
+    // so retaining the handle would cause `sendCurrentMessage` to wait for
+    // a status that never arrives — stalling the next outbound until
+    // OUTBOUND_DELIVERY_TIMEOUT_MS (default 30s). With no handle, the
+    // dispatch loop advances the queue immediately on success.
+    return { raw: result.raw };
   }
 
   private resolveInboundTarget(item: OutboundMessageItem, state: ConversationRecord): string | undefined {

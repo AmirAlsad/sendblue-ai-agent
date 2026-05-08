@@ -29,6 +29,15 @@ export type AgentConfig = {
   inboundTypingStateEnabled: boolean;
   readReceiptsEnabled: boolean;
   readReceiptDebounceMs: number;
+  /**
+   * Delay before the first outbound typing indicator fires after a chat
+   * turn starts. If the chat endpoint returns silence (or any other empty
+   * response) within this window, no typing call is ever sent — which
+   * matters because Sendblue's iMessage typing bubble persists on the
+   * device for ~60s after the last typing call. A non-zero default lets
+   * fast/silence-returning bots avoid leaving a phantom typing bubble.
+   */
+  typingStartDelayMs: number;
   typingRefreshIntervalMs: number;
   typingRefreshMaxMs: number;
   agentDisplayName: string;
@@ -138,6 +147,7 @@ export function loadConfig(env: ConfigEnv = process.env): AgentConfig {
     inboundTypingStateEnabled: optionalBoolean(env, 'INBOUND_TYPING_STATE_ENABLED', true),
     readReceiptsEnabled: optionalBoolean(env, 'READ_RECEIPTS_ENABLED', false),
     readReceiptDebounceMs: optionalInt(env, 'READ_RECEIPT_DEBOUNCE_MS', 250),
+    typingStartDelayMs: optionalInt(env, 'TYPING_START_DELAY_MS', 500),
     typingRefreshIntervalMs: optionalInt(env, 'TYPING_REFRESH_INTERVAL_MS', 5000),
     typingRefreshMaxMs: optionalInt(env, 'TYPING_REFRESH_MAX_MS', 120000),
     agentDisplayName: optionalString(env, 'AGENT_DISPLAY_NAME') ?? 'sb-agent',

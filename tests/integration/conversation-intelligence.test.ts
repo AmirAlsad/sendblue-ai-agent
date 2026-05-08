@@ -297,13 +297,14 @@ describe('conversation intelligence', () => {
     expect(chatClient.calls[1].identity).toBeNull();
   });
 
-  it('sends direct read receipts before chat and refreshes typing until final delivery', async () => {
+  it('sends read receipts before chat and stops typing as soon as the chat returns', async () => {
     await close();
     const refreshedConfig = testConfig({
       bufferBaseTimeoutMs: 25,
       bufferMaxTimeoutMs: 25,
       bufferNoiseMaxDeviation: 0,
       readReceiptsEnabled: true,
+      typingStartDelayMs: 0,
       typingRefreshIntervalMs: 10,
       typingRefreshMaxMs: 100,
       outboundDeliveryTimeoutMs: 5000
@@ -317,7 +318,13 @@ describe('conversation intelligence', () => {
     app = created.app;
     close = created.close;
 
-    chatClient.responses.push({ messages: ['done'] });
+    // Hold the chat response open so we can observe typing while in flight.
+    let resolveChat!: (response: ChatEndpointResponse) => void;
+    const pendingChat = new Promise<ChatEndpointResponse>(resolve => {
+      resolveChat = resolve;
+    });
+    chatClient.responses.push(pendingChat);
+
     await dispatch(app, {
       method: 'POST',
       path: '/webhook/receive',
@@ -331,19 +338,173 @@ describe('conversation intelligence', () => {
     expect(chatClient.calls).toHaveLength(1);
     expect(sendblueClient.typingCalls).toHaveLength(1);
 
-    await vi.advanceTimersByTimeAsync(20);
+    // Refresh fires while we're still waiting on the chat response.
+    await vi.advanceTimersByTimeAsync(25);
     expect(sendblueClient.typingCalls.length).toBeGreaterThan(1);
 
+    // Chat returns — typing should stop here, before the message even goes out.
+    // Refreshing during sending only risks lighting up a phantom bubble: the
+    // device-side iMessage typing indicator persists ~60s after the last call
+    // regardless of refresh, and arriving messages clear it anyway.
+    resolveChat({ messages: ['done'] });
+    await vi.advanceTimersByTimeAsync(0);
+    const stoppedAt = sendblueClient.typingCalls.length;
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(sendblueClient.typingCalls).toHaveLength(stoppedAt);
+
+    // DELIVERED status is now well after typing has stopped — make sure it
+    // doesn't accidentally restart the indicator.
     await dispatch(app, {
       method: 'POST',
       path: '/webhook/status',
       headers: { [refreshedConfig.sendblueWebhookSecretHeader]: refreshedConfig.sendblueWebhookSecret! },
       body: { message_handle: 'sent-1', status: 'DELIVERED', service: 'iMessage' }
     });
-    const stoppedAt = sendblueClient.typingCalls.length;
-
     await vi.advanceTimersByTimeAsync(30);
     expect(sendblueClient.typingCalls).toHaveLength(stoppedAt);
+  });
+
+  it('skips the typing indicator entirely when the chat returns silence within the start delay', async () => {
+    await close();
+    const silenceConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      typingStartDelayMs: 200,
+      typingRefreshIntervalMs: 50,
+      typingRefreshMaxMs: 1000,
+      outboundDeliveryTimeoutMs: 5000
+    });
+    const created = createApp({
+      config: silenceConfig,
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+
+    chatClient.responses.push({ silence: true });
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [silenceConfig.sendblueWebhookSecretHeader]: silenceConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'silence-1' })
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+    expect(chatClient.calls).toHaveLength(1);
+    // Chat returned silence; agent should never have fired the typing call.
+    expect(sendblueClient.typingCalls).toHaveLength(0);
+
+    // Even after the start delay elapses, no typing call fires because the
+    // refresh was cancelled when the silence response was consumed.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sendblueClient.typingCalls).toHaveLength(0);
+  });
+
+  it('fires a brief typing indicator between queued outbound messages', async () => {
+    await close();
+    const interConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      typingStartDelayMs: 200,
+      typingRefreshIntervalMs: 50,
+      typingRefreshMaxMs: 1000,
+      outboundDeliveryTimeoutMs: 5000
+    });
+    const created = createApp({
+      config: interConfig,
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+
+    chatClient.responses.push({
+      actions: [
+        { type: 'message', content: 'first' },
+        { type: 'message', content: 'second' }
+      ]
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [interConfig.sendblueWebhookSecretHeader]: interConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'inter-multi-1' })
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+    expect(sendblueClient.calls).toHaveLength(1);
+    // No typing yet — first message went out under the start delay.
+    expect(sendblueClient.typingCalls).toHaveLength(0);
+
+    // Deliver the first message; queue advances and sends the second. A
+    // single inter-message typing call should fire just before the second
+    // send goes out.
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: { [interConfig.sendblueWebhookSecretHeader]: interConfig.sendblueWebhookSecret! },
+      body: { message_handle: 'sent-1', status: 'DELIVERED', service: 'iMessage' }
+    });
+
+    expect(sendblueClient.calls).toHaveLength(2);
+    expect(sendblueClient.typingCalls).toHaveLength(1);
+
+    // Inter-message typing is one-shot — no refresh follow-up.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sendblueClient.typingCalls).toHaveLength(1);
+  });
+
+  it('skips the typing indicator when the chat returns multiple actions within the start delay', async () => {
+    await close();
+    const fastConfig = testConfig({
+      bufferBaseTimeoutMs: 25,
+      bufferMaxTimeoutMs: 25,
+      bufferNoiseMaxDeviation: 0,
+      typingStartDelayMs: 200,
+      typingRefreshIntervalMs: 50,
+      typingRefreshMaxMs: 1000,
+      outboundDeliveryTimeoutMs: 5000
+    });
+    const created = createApp({
+      config: fastConfig,
+      chatClient,
+      sendblueClient,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+
+    // Two ordered messages — same shape as the action-catalog `multi` keyword.
+    chatClient.responses.push({
+      actions: [
+        { type: 'message', content: 'first' },
+        { type: 'message', content: 'second' }
+      ]
+    });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [fastConfig.sendblueWebhookSecretHeader]: fastConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'multi-1' })
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+    expect(chatClient.calls).toHaveLength(1);
+    expect(sendblueClient.calls.length).toBeGreaterThan(0);
+
+    // Chat returned multiple actions within the start delay. The first message
+    // has already been queued — the pending typing-start timer must have been
+    // cancelled before it could fire.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sendblueClient.typingCalls).toHaveLength(0);
   });
 
   it('keeps non-invoked groups silent and routes addressed group mentions', async () => {

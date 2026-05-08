@@ -9,77 +9,16 @@
  * the bot" path. For the full hardware loop (real iMessage device, real
  * Sendblue line, real webhooks), use `npm run dev:e2e`.
  */
-import { spawn, type ChildProcess } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import readline from 'readline';
-
-const __filename = fileURLToPath(import.meta.url);
-const REPO_ROOT = resolve(dirname(__filename), '..');
-
-interface ExampleSpec {
-  name: string;
-  port: number;
-  dir: string;
-  command: string;
-  args: string[];
-  /** If true, run `npm install` in the example dir if node_modules is missing. */
-  needsInstall?: boolean;
-  /** Env vars that must be set in either process.env or the example's .env. */
-  requiredEnv?: string[];
-  /** Description shown in --help and on boot. */
-  description: string;
-  /** Notable parameters worth telling the user about. */
-  hints?: string[];
-}
-
-const EXAMPLES: Record<string, ExampleSpec> = {
-  'minimal-chat-endpoint': {
-    name: 'minimal-chat-endpoint',
-    port: 4001,
-    dir: 'examples/minimal-chat-endpoint',
-    command: 'node',
-    args: ['server.js'],
-    description: 'Smallest possible echo bot.',
-    hints: ['Type `silence` to see the silence path.']
-  },
-  'action-catalog': {
-    name: 'action-catalog',
-    port: 4003,
-    dir: 'examples/action-catalog',
-    command: 'node',
-    args: ['server.js'],
-    description: 'One handler per chat action type.',
-    hints: [
-      'Try: `silence`, `multi`, `react`, `reply`, `media`, `effect`, `group`, `downgrade`.',
-      'Type `/sms on` to toggle simulated SMS downgrade and see iMessage-only fallbacks.'
-    ]
-  },
-  'scripted-flow': {
-    name: 'scripted-flow',
-    port: 4005,
-    dir: 'examples/scripted-flow',
-    command: 'node',
-    args: ['server.js'],
-    description: 'Pizza pickup state machine. Walks through every action type as a real conversation arc.',
-    hints: ['Type any greeting to start, then a size, toppings, your name, and "here" on arrival.']
-  },
-  'showcase-bot': {
-    name: 'showcase-bot',
-    port: 4006,
-    dir: 'examples/showcase-bot',
-    command: 'npm',
-    args: ['start', '--silent'],
-    needsInstall: true,
-    requiredEnv: ['ANTHROPIC_API_KEY'],
-    description: 'LLM-backed bot via Vercel AI SDK. The model decides which actions to call.',
-    hints: [
-      'Try: `tell me a joke`, `react to my last message with a heart`, `send me an image of a beach`.',
-      'Conversation history is per-conversation-key; type `/reset` to start fresh.'
-    ]
-  }
-};
+import {
+  EXAMPLES,
+  checkRequiredEnv,
+  ensureInstalled,
+  spawnExample,
+  waitForHealth,
+  killChildAndWait,
+  type ExampleSpec
+} from './lib/examples.js';
 
 function parseArgs(argv: string[]): { example?: string; help: boolean; raw: boolean } {
   const args = argv.slice(2);
@@ -111,79 +50,6 @@ Once running, type a message and press enter. Special commands:
   /raw           Toggle raw JSON output
   /exit          Quit
 `);
-}
-
-function loadExampleEnv(spec: ExampleSpec): Record<string, string> {
-  const envPath = resolve(REPO_ROOT, spec.dir, '.env');
-  if (!existsSync(envPath)) return {};
-  const result: Record<string, string> = {};
-  for (const line of readFileSync(envPath, 'utf-8').split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-    if (!match) continue;
-    let value = match[2]!;
-    const quoted =
-      (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
-    if (quoted) {
-      value = value.slice(1, -1);
-    } else {
-      // Strip a trailing inline comment (` # ...`) on unquoted values so users
-      // who annotate their .env don't end up with the comment text in the value.
-      const hashIdx = value.indexOf(' #');
-      if (hashIdx >= 0) value = value.slice(0, hashIdx).trimEnd();
-    }
-    if (value !== '') result[match[1]!] = value;
-  }
-  return result;
-}
-
-function checkRequiredEnv(spec: ExampleSpec): string[] {
-  if (!spec.requiredEnv) return [];
-  const fromFile = loadExampleEnv(spec);
-  return spec.requiredEnv.filter(key => !process.env[key] && !fromFile[key]);
-}
-
-async function waitForHealth(port: number, timeoutMs = 30_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastErr: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`http://localhost:${port}/health`);
-      if (res.ok) return;
-      lastErr = `HTTP ${res.status}`;
-    } catch (err) {
-      lastErr = err;
-    }
-    await new Promise(r => setTimeout(r, 250));
-  }
-  throw new Error(`example did not become healthy on port ${port}: ${lastErr}`);
-}
-
-function ensureInstalled(spec: ExampleSpec): Promise<void> {
-  return new Promise((resolveFn, rejectFn) => {
-    const dir = resolve(REPO_ROOT, spec.dir);
-    if (existsSync(resolve(dir, 'node_modules'))) {
-      resolveFn();
-      return;
-    }
-    console.log(`> installing dependencies in ${spec.dir}...`);
-    const install = spawn('npm', ['install', '--silent'], { cwd: dir, stdio: 'inherit' });
-    install.on('exit', code => {
-      if (code === 0) resolveFn();
-      else rejectFn(new Error(`npm install failed with exit code ${code}`));
-    });
-  });
-}
-
-function spawnExample(spec: ExampleSpec): ChildProcess {
-  const dir = resolve(REPO_ROOT, spec.dir);
-  const child = spawn(spec.command, spec.args, {
-    cwd: dir,
-    env: { ...process.env, PORT: String(spec.port) },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  child.stdout?.on('data', chunk => process.stderr.write(`  [${spec.name}] ${chunk}`));
-  child.stderr?.on('data', chunk => process.stderr.write(`  [${spec.name}] ${chunk}`));
-  return child;
 }
 
 interface SessionState {
@@ -446,20 +312,7 @@ async function main(): Promise<void> {
   const cleanupAndExit = async (signal: NodeJS.Signals, code: number) => {
     if (exiting) return;
     exiting = true;
-    if (!child.killed) child.kill(signal);
-    // Wait for the child to actually exit before returning so piped/CI usage
-    // doesn't orphan the example server in its own process group.
-    await new Promise<void>(resolveFn => {
-      if (child.exitCode !== null) return resolveFn();
-      const timeout = setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL');
-        resolveFn();
-      }, 3_000);
-      child.once('exit', () => {
-        clearTimeout(timeout);
-        resolveFn();
-      });
-    });
+    await killChildAndWait(child, signal);
     process.exit(code);
   };
   process.on('SIGINT', () => void cleanupAndExit('SIGINT', 0));

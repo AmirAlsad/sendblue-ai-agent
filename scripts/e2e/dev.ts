@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import pino from 'pino';
 import { createApp } from '../../src/http/app.js';
 import { HttpChatClient } from '../../src/chat/client.js';

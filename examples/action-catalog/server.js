@@ -40,10 +40,75 @@ function isAddressedGroup(body, lowerText) {
   return AGENT_NAME !== '' && lowerText.includes(AGENT_NAME);
 }
 
-function actionsResponse(body) {
+const HELP_TEXTS = {
+  silence:
+    'Returns `{ silence: true }`. Agent acks your message but sends nothing back. Success looks like no reply at all.',
+  multi:
+    'Two ordered `message` actions. The agent sends the second only after the first is DELIVERED. You should see a brief typing bubble between them.',
+  react:
+    'A `reaction` action — drops a heart Tapback on your "react" message. iMessage-only; on SMS the transport falls back to a plain text message instead.',
+  reply:
+    'A `reply` action targeting your last message. Sendblue\'s direct-send API has no native reply target yet, so it lands as a normal message — the resolved target is logged.',
+  media:
+    'A `media` action with a publicly hosted HTTPS URL. Sendblue fetches the URL at send time. Set `HOSTED_MEDIA_URL` to point at your own asset.',
+  effect:
+    'A `message` action with `sendStyle: "celebration"` — confetti rains down when it lands. iMessage-only; on SMS the transport falls back to plain text.',
+  typing:
+    'The chat endpoint stalls 1.5s before responding so the agent\'s typing-start delay (default 500ms) elapses. You should see a typing bubble for ~1s before the reply lands.',
+  group:
+    'Only fires in a group iMessage thread where the agent is addressed by name (default `sb-agent`). In a 1:1 chat like this one, you\'ll see no reply — that\'s correct. To exercise it, add the Sendblue line to a group with another participant and address it: "sb-agent group ping".',
+  downgrade:
+    'Replies with text describing whether the current conversation is iMessage or SMS-downgraded. Use it to confirm the transport is classifying the channel correctly.'
+};
+
+async function actionsResponse(body) {
   const text = incomingText(body).toLowerCase();
   const target = targetLastInbound(body);
   const smsLike = isSmsLike(body);
+
+  if (text.startsWith('help')) {
+    const arg = text.slice(4).trim();
+    if (!arg) {
+      return {
+        actions: [
+          {
+            type: 'message',
+            content:
+              'Send `help <keyword>` for details. Keywords: silence, multi, react, reply, media, effect, typing, group, downgrade.'
+          }
+        ]
+      };
+    }
+    for (const [keyword, explanation] of Object.entries(HELP_TEXTS)) {
+      if (arg.includes(keyword)) {
+        return { actions: [{ type: 'message', content: `${keyword}: ${explanation}` }] };
+      }
+    }
+    return {
+      actions: [
+        {
+          type: 'message',
+          content: `Unknown keyword. Try: ${Object.keys(HELP_TEXTS).join(', ')}.`
+        }
+      ]
+    };
+  }
+
+  if (text.includes('typing')) {
+    // Stall past TYPING_START_DELAY_MS so the agent fires its typing
+    // indicator. Default delay is 500ms; 1500ms gives the bubble ~1s of
+    // visible time before this response lands and clears it.
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    return {
+      actions: [
+        {
+          type: 'message',
+          content:
+            'You should have seen a typing bubble for ~1s — the agent fires typing once your chat call exceeds TYPING_START_DELAY_MS (default 500ms) and stops as soon as your response arrives.'
+        }
+      ]
+    };
+  }
 
   if (text.includes('silence')) {
     return { silence: true };
@@ -137,51 +202,9 @@ function actionsResponse(body) {
       {
         type: 'message',
         content:
-          'Action catalog ready. Try: silence, multi, react, reply, media, effect, group, downgrade. Append ?mode=xml to the URL to see XML-tagged output.'
+          'Action catalog ready. Try: silence, multi, react, reply, media, effect, typing, group, downgrade. Send `help <keyword>` for details on what each one does.'
       }
     ]
-  };
-}
-
-function xmlResponse(body) {
-  const text = incomingText(body).toLowerCase();
-  const targetHandle =
-    body.messages?.at(-1)?.messageHandle || body.messageHandle || null;
-  const targetAttr = targetHandle
-    ? ` target_message_handle="${targetHandle}"`
-    : ' target="latest"';
-
-  if (text.includes('silence')) return { message: '<no_response />' };
-
-  if (text.includes('multi')) {
-    return {
-      message: ['<message>First XML-tagged reply.</message>', '<message>Second XML-tagged reply.</message>'].join('\n')
-    };
-  }
-
-  if (text.includes('react')) {
-    return { message: `<reaction type="love"${targetAttr} />` };
-  }
-
-  if (text.includes('reply')) {
-    return {
-      message: `<reply${targetAttr}><message>XML reply intent — delivered as a normal message fallback.</message></reply>`
-    };
-  }
-
-  if (text.includes('media')) {
-    return {
-      message: `<message media_url="${HOSTED_MEDIA_URL}">Hosted media via XML tag.</message>`
-    };
-  }
-
-  if (text.includes('effect')) {
-    return { message: '<message send_style="celebration">XML message with a send effect.</message>' };
-  }
-
-  return {
-    message:
-      'XML mode ready. Try: silence, multi, react, reply, media, effect. The transport parses these tags into chat actions.'
   };
 }
 
@@ -189,16 +212,14 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'action-catalog' });
 });
 
-app.post('/chat', (req, res) => {
+app.post('/chat', async (req, res) => {
   const body = req.body || {};
-  const mode = String(req.query.mode || '').toLowerCase();
-  const response = mode === 'xml' ? xmlResponse(body) : actionsResponse(body);
+  const response = await actionsResponse(body);
 
   console.log(
     JSON.stringify({
       at: new Date().toISOString(),
       event: 'chat.action_catalog',
-      mode: mode || 'actions',
       conversationKey: body.conversation?.key || null,
       messageHandle: body.messageHandle || null,
       actionCount: Array.isArray(response.actions) ? response.actions.length : undefined
@@ -212,5 +233,4 @@ const port = Number.parseInt(process.env.PORT || '4003', 10);
 app.listen(port, () => {
   console.log(`action-catalog endpoint listening on http://localhost:${port}`);
   console.log(`set CHAT_ENDPOINT_URL=http://localhost:${port}/chat`);
-  console.log(`for XML tag mode: CHAT_ENDPOINT_URL=http://localhost:${port}/chat?mode=xml`);
 });

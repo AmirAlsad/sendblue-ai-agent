@@ -53,8 +53,16 @@ REPL commands inside that prompt: `/sms on|off` simulates an SMS-downgraded
 conversation, `/reset` starts a fresh `conversationKey`, `/raw` toggles
 the full JSON response, `/help` lists everything, `/exit` quits.
 
-To run the bot standalone (so you can point a real Sendblue `CHAT_ENDPOINT_URL`
-at it):
+To exercise it over **real iMessage** to your Sendblue line — the runner
+boots the bot, the agent, ngrok, and webhooks all wired up:
+
+```bash
+# from the repo root, with SENDBLUE_*, NGROK_AUTHTOKEN, E2E_TEST_DEVICE_NUMBER in .env
+npm run example:dev -- showcase-bot
+```
+
+To run the bot standalone (so you can point a different agent or your
+own `CHAT_ENDPOINT_URL` at it):
 
 ```bash
 npm run dev          # tsx watch — restarts on file changes

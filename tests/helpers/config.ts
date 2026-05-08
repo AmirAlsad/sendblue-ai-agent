@@ -30,6 +30,7 @@ export function testConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
     inboundTypingStateEnabled: true,
     readReceiptsEnabled: false,
     readReceiptDebounceMs: 0,
+    typingStartDelayMs: 0,
     typingRefreshIntervalMs: 0,
     typingRefreshMaxMs: 0,
     agentDisplayName: 'sb-agent',

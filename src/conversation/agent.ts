@@ -53,6 +53,7 @@ type RichSendblueClient = SendblueClient & {
 };
 
 type TypingRefresh = {
+  start?: NodeJS.Timeout;
   interval?: NodeJS.Timeout;
   max?: NodeJS.Timeout;
 };
@@ -173,6 +174,21 @@ export class ConversationAgent {
     const state = this.applyChannel(base, channel, webhook.wasDowngraded === true);
     if (groupId) this.applyGroupMetadata(state, webhook);
     state.identity = identity;
+
+    this.deps.logger.info(
+      {
+        conversationKey: key,
+        messageHandle: webhook.messageHandle,
+        fromNumber: phoneNumber,
+        // What Sendblue sent us:
+        sendblueService: webhook.service,
+        sendblueWasDowngraded: webhook.wasDowngraded,
+        // What the agent decided:
+        channel: state.channel,
+        smsDowngraded: state.smsDowngraded
+      },
+      'received inbound message'
+    );
 
     switch (state.state) {
       case 'idle':
@@ -323,6 +339,13 @@ export class ConversationAgent {
       return 0;
     }
 
+    // Typing exists to bridge the gap before the first outbound message lands.
+    // Once we have a response and are about to send it, refreshing typing only
+    // risks lighting up a phantom bubble (Sendblue's iMessage typing indicator
+    // persists on the device for ~60s after the last call, even with no
+    // refresh). Cancel any scheduled or in-flight typing here.
+    this.stopTypingRefresh(conversationKey);
+
     latest.state = 'sending';
     latest.lastInboundMessageHandles = latest.inboundBuffer.map(message => message.messageHandle);
     latest.outboundQueue = actions.map((action, index) => ({
@@ -358,6 +381,25 @@ export class ConversationAgent {
     if (item.kind === 'silence') {
       await this.skipCurrentAction(state, item, 'silence action does not send to Sendblue');
       return;
+    }
+
+    // One-shot typing between queued outbound messages so the user sees a
+    // brief typing bubble bridging consecutive bubbles. We never refresh
+    // here — Sendblue's iMessage typing indicator is replaced as soon as the
+    // next message lands on the device, so a single call is enough.
+    if (
+      state.currentOutboundIndex > 0 &&
+      isOutboundMessageKind(item.kind) &&
+      this.shouldSendTypingIndicator(state)
+    ) {
+      this.deps.sendblueClient
+        .sendTypingIndicator({ toNumber: state.phoneNumber })
+        .catch(error =>
+          this.deps.logger.debug(
+            { err: error, conversationKey: state.key },
+            'inter-message typing failed'
+          )
+        );
     }
 
     let result: SendblueActionResult | { messageHandle?: string; raw?: unknown } | undefined;
@@ -512,6 +554,24 @@ export class ConversationAgent {
     };
     if (item.mediaUrl) message.mediaUrl = item.mediaUrl;
     if (sendStyle) message.sendStyle = sendStyle;
+
+    // NOTE: Sendblue routes purely by recipient capability detection. There
+    // is no documented input parameter (was_downgraded, force_sms, channel,
+    // protocol) on /api/send-message that overrides routing. If the
+    // recipient has iMessage enabled, the message is sent via iMessage and
+    // Apple's network queues it until the device is reachable. Replies to a
+    // user temporarily off iMessage will arrive once they reconnect.
+    this.deps.logger.info(
+      {
+        conversationKey: state.key,
+        toNumber: state.phoneNumber,
+        channel: state.channel,
+        smsDowngraded: state.smsDowngraded,
+        hasMedia: Boolean(message.mediaUrl),
+        sendStyle: message.sendStyle
+      },
+      'sending outbound direct message'
+    );
     return this.deps.sendblueClient.sendMessage(message);
   }
 
@@ -598,7 +658,10 @@ export class ConversationAgent {
     if (!this.shouldSendReadReceipt(state)) return;
     const client = this.deps.sendblueClient as RichSendblueClient;
     if (!client.markRead) {
-      this.deps.logger.debug({ conversationKey: state.key }, 'read receipt is not supported by Sendblue client');
+      this.deps.logger.warn(
+        { conversationKey: state.key },
+        'read receipt requested but Sendblue client does not implement markRead'
+      );
       return;
     }
 
@@ -607,9 +670,23 @@ export class ConversationAgent {
     }
 
     try {
-      await client.markRead({ toNumber: state.phoneNumber });
+      const result = await client.markRead({ toNumber: state.phoneNumber });
+      // Surface every attempt at info — the on-device "Read" indicator only
+      // appears when Sendblue has read receipts enabled for the line
+      // (contact support@sendblue.com to enable). Logging the call here lets
+      // operators tell whether the agent is doing its part.
+      this.deps.logger.info(
+        {
+          conversationKey: state.key,
+          toNumber: state.phoneNumber,
+          status: result?.status,
+          message: result?.message,
+          errorCode: result?.errorCode
+        },
+        'read receipt sent'
+      );
     } catch (error) {
-      this.deps.logger.debug({ err: error, conversationKey: state.key }, 'read receipt failed');
+      this.deps.logger.warn({ err: error, conversationKey: state.key }, 'read receipt failed');
     }
   }
 
@@ -635,11 +712,21 @@ export class ConversationAgent {
         .catch(error => this.deps.logger.debug({ err: error, conversationKey: state.key }, 'typing indicator failed'));
     };
 
-    send();
-
+    // Defer the first call by typingStartDelayMs. Sendblue's iMessage typing
+    // bubble persists on the device for ~60s after the last typing call, so a
+    // chat endpoint that returns silence in <delay never lights up a bubble at
+    // all. Long-running responses still see typing once the delay elapses.
     const refresh: TypingRefresh = {};
-    if (this.deps.config.typingRefreshIntervalMs > 0) {
-      refresh.interval = setInterval(send, this.deps.config.typingRefreshIntervalMs);
+    const begin = () => {
+      send();
+      if (this.deps.config.typingRefreshIntervalMs > 0) {
+        refresh.interval = setInterval(send, this.deps.config.typingRefreshIntervalMs);
+      }
+    };
+    if (this.deps.config.typingStartDelayMs > 0) {
+      refresh.start = setTimeout(begin, this.deps.config.typingStartDelayMs);
+    } else {
+      begin();
     }
     if (this.deps.config.typingRefreshMaxMs > 0) {
       refresh.max = setTimeout(() => this.stopTypingRefresh(state.key), this.deps.config.typingRefreshMaxMs);
@@ -650,6 +737,7 @@ export class ConversationAgent {
   private stopTypingRefresh(conversationKey: string): void {
     const refresh = this.typingRefreshes.get(conversationKey);
     if (!refresh) return;
+    if (refresh.start) clearTimeout(refresh.start);
     if (refresh.interval) clearInterval(refresh.interval);
     if (refresh.max) clearTimeout(refresh.max);
     this.typingRefreshes.delete(conversationKey);
@@ -678,21 +766,24 @@ export class ConversationAgent {
     this.deliveryTimeouts.delete(messageHandle);
   }
 
-  // Channel-aware ordered-delivery gate. Sendblue docs only confirm
-  // iMessage→DELIVERED and SMS→SENT explicitly; RCS conversations are
-  // assumed to follow iMessage and advance on DELIVERED. If a captured live
-  // RCS callback ever shows that RCS terminates at SENT instead, this branch
-  // (and docs/features/ordered-delivery.md) needs adjusting — RCS queues
-  // would otherwise stall waiting for a DELIVERED that never arrives. Pin
-  // before v1.0.
+  // Channel-aware ordered-delivery gate. iMessage and RCS report DELIVERED;
+  // SMS reports only SENT. RCS confirmed via Sendblue's RCS feature list
+  // (https://docs.sendblue.com/api-v2/rcs/), which lists "delivery
+  // confirmations" alongside read receipts.
   private successStatus(state: ConversationRecord): 'SENT' | 'DELIVERED' {
     return state.smsDowngraded || state.channel === 'sms' ? 'SENT' : 'DELIVERED';
   }
 
-  // iMessage-only rich actions (send effects, reactions, replies, read
-  // receipts, typing refreshes) must be suppressed or safely degraded for SMS
-  // and downgraded conversations. RCS is treated as not supporting these
-  // iMessage-specific affordances either.
+  // iMessage-only rich actions (send effects, reactions, outbound typing
+  // indicators) must be suppressed for SMS, RCS, and downgraded conversations.
+  // Per Sendblue's docs as of 2026-05-07:
+  //   - /api-v2/reactions/ — "Reactions (tapbacks) are only supported for
+  //     iMessage conversations. They are not supported for SMS or RCS."
+  //   - /api-v2/typing-indicators/ — "Typing indicators are only supported
+  //     for iMessage conversations, not SMS or RCS."
+  //   - send_style is described as "iMessage expressive message style".
+  // Read receipts have a separate gate (shouldSendReadReceipt) because
+  // /api-v2/read-receipts/ documents support for both iMessage and RCS.
   private supportsImessageRichAction(state: ConversationRecord): boolean {
     return state.channel === 'imessage' && !state.smsDowngraded;
   }
@@ -828,6 +919,10 @@ function responseActions(
   });
   if (normalized.silence === true) return [];
   return normalized.actions.map(actionFromChatAction);
+}
+
+function isOutboundMessageKind(kind: OutboundMessageItem['kind']): boolean {
+  return kind === 'message' || kind === 'media' || kind === 'reply';
 }
 
 function actionFromChatAction(action: ChatAction): Omit<OutboundMessageItem, 'id'> {

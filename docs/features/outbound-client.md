@@ -136,6 +136,44 @@ channel and `was_downgraded` state. The client returns whatever
 Sendblue responds with, including `400` errors when the channel does
 not support the feature.
 
+### Routing is not controllable from the request
+
+Sendblue routes every send by recipient capability detection — for an
+iMessage-capable number, it sends via iMessage; otherwise SMS. The
+documented `/api/send-message` parameter list (`number`, `from_number`,
+`content`, `media_url`, `send_style`, `status_callback`, `seat_id`) does
+**not** include any routing override (no `force_sms`, no `protocol`, no
+`channel`). The `was_downgraded` field is a response/webhook field
+only; sending it in a request body is silently ignored.
+
+Practical consequence: when the recipient has iMessage enabled but is
+temporarily unreachable on Apple's network (e.g. WiFi and cellular
+data both off, only cellular SMS active), Sendblue still sends iMessage.
+Apple's network queues the message until the device reconnects to
+iMessage. There is no Sendblue-side timer that demotes a queued
+iMessage to SMS, and no documented way for the agent to force SMS.
+
+If a deployment requires guaranteed SMS delivery to numbers that may
+have iMessage capability, contact `support@sendblue.com` — there is no
+public API for it.
+
+### Status callback signatures are not documented
+
+`POST /api/send-message` takes a `status_callback` URL we generate per
+message. Sendblue's docs document `sb-signing-secret` only for
+account-level webhooks (receive, outbound, typing-indicator, etc.).
+Empirically, status callbacks arrive without any `sb-*` headers.
+
+The `validateStatusCallbackSecret` helper in `src/http/security.ts`
+is intentionally lenient on this route: it accepts unsigned requests
+(matches current Sendblue behavior), accepts correctly-signed requests
+(forward-compat if Sendblue starts signing), and rejects requests with
+explicit-but-wrong signing headers. Receive webhooks remain strictly
+validated by `validateWebhookSecret`. If you need stronger
+authentication on status callbacks today, encode a per-deployment
+secret in the `status_callback` URL itself and validate the path/query
+parameters in your own middleware.
+
 ## Code files
 
 | File                                  | Role                                                        |

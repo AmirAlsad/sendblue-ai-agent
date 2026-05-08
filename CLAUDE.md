@@ -57,9 +57,12 @@ The runtime is a single Express app composed in `src/http/app.ts`. `createApp(de
 - Scheduler: `InMemoryBufferScheduler` for tests/local, `BullMqBufferScheduler` for production. Selection is driven by `REDIS_URL` in `createApp`.
 - Ordered delivery is **channel-aware**: iMessage/RCS queues advance on `DELIVERED`; SMS and downgraded queues advance on `SENT`. `was_downgraded` is conversation-significant state — preserve it.
 - Groups are silent unless addressed to `AGENT_DISPLAY_NAME`, reference a known agent outbound, or future payloads include explicit reply metadata. Always ack/dedupe/log; only reply by `group_id` for addressed inbound-initiated groups.
-- Per-feature channel support (per https://docs.sendblue.com/api-v2/):
-  - **iMessage-only**: send effects (`send_style`), Tapback reactions, replies, outbound typing indicators, typing refreshes. Suppress/degrade for SMS, downgraded, and RCS.
-  - **iMessage + RCS** (not SMS): read receipts (`POST /api/mark-read`).
+- Per-feature channel support (verified 2026-05-07 against Sendblue docs):
+  - **iMessage only**: Tapback reactions (`/api-v2/reactions/`), outbound typing indicators (`/api-v2/typing-indicators/`), send effects (`send_style`). Suppress/degrade on RCS, SMS, downgraded.
+  - **iMessage + RCS** (not SMS): read receipts (`POST /api/mark-read`, `/api-v2/read-receipts/`).
+  - **All channels**: text, media (`media_url` — auto-compressed to ≤5 MB MMS on SMS downgrade).
+  - Sendblue has **no routing override** on `/api/send-message` — `was_downgraded` on the request is silently ignored. iMessage-capable numbers always receive iMessage; Apple queues if the device is offline. Do not add `force_sms`-style code paths.
+  - Per-message `status_callback` URLs arrive unsigned. `/webhook/status` uses `validateStatusCallbackSecret` (lenient); receive/typing/operational use `validateWebhookSecret` (strict).
 - `was_downgraded` is conversation-significant but **not sticky for life**: clears when a fresh `service: "iMessage"` receive arrives so iMessage-only features re-engage.
 - Reply intent is preserved through the chat contract but currently sends as a normal message — Sendblue direct sends do not expose a native reply target parameter.
 - Read receipts are best-effort `POST /api/mark-read` (gated by `READ_RECEIPTS_ENABLED`) and account-gated by Sendblue (contact support@sendblue.com to enable). There is no `READ` status callback. Do not assume one.

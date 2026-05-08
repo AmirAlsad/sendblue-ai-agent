@@ -23,7 +23,8 @@ URL. Each webhook entry can carry its own secret, or an account-wide
 `globalSecret` can apply to all webhooks (see the registration section below).
 
 The `validateWebhookSecret` helper in `src/http/security.ts` runs at the start
-of every webhook route in `src/http/app.ts`:
+of the receive, typing-indicator, and operational webhook routes in
+`src/http/app.ts`:
 
 - If `SENDBLUE_WEBHOOK_SECRET` is unset, validation is disabled (useful for
   local-only smoke runs without a public endpoint). All requests are accepted.
@@ -37,6 +38,32 @@ of every webhook route in `src/http/app.ts`:
 When validation fails, the route logs a structured warning with the path, the
 present `sb-`-prefixed header names (but never their values), the remote IP,
 and the user agent, then returns `401 Unauthorized`.
+
+### Per-message status callbacks are validated leniently
+
+The `/webhook/status` route is the URL passed in the `status_callback` field of
+each `/api/send-message` request. Sendblue's documentation describes
+`sb-signing-secret` only for account-level webhooks (receive, outbound,
+typing-indicator, etc.). Per-message status callbacks arrive at our endpoint
+**without any `sb-*` headers** in production — confirmed by live testing
+against `api.sendblue.co` and by absence in Sendblue's docs and community
+discussion.
+
+To avoid rejecting every legitimate status callback, the status route uses a
+sibling helper, `validateStatusCallbackSecret` in `src/http/security.ts`, with
+a three-way decision:
+
+| Incoming request | Decision |
+| --- | --- |
+| Carries a valid signing header | Accept (forward-compat if Sendblue starts signing) |
+| Carries an explicit but wrong header | Reject (prevents misconfigured installs from silently accepting bogus signatures) |
+| No `sb-*` header at all | Accept (matches current Sendblue behavior) |
+
+If a deployment requires stronger authentication on status callbacks today,
+encode a per-deployment secret as a query parameter in the `status_callback`
+URL itself and validate it in your own middleware. The `status_callback` URL is
+otherwise unauthenticated; obscurity-in-depth (random ngrok subdomain or
+production agent host) is the only protection out of the box.
 
 ### Status code policy and retries
 
@@ -115,7 +142,7 @@ through ngrok.
 | File | Role |
 | --- | --- |
 | `src/http/app.ts` | Express route composition, response code policy, structured logging on auth and parse failures. |
-| `src/http/security.ts` | Constant-time shared-secret validation against `sb-signing-secret` and the configured header alias. |
+| `src/http/security.ts` | `validateWebhookSecret` (strict) and `validateStatusCallbackSecret` (lenient — accepts unsigned because Sendblue does not sign per-message status callbacks). Both use constant-time comparison. |
 | `src/sendblue/webhook-types.ts` | Canonical list of webhook types and route paths. |
 | `scripts/e2e/sendblue-webhooks.ts` | CLI entry point for `npm run sendblue:webhooks`. |
 | `scripts/e2e/lib/sendblue-webhooks.ts` | Sendblue webhook list/create/replace API client. |

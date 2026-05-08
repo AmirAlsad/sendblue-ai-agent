@@ -20,7 +20,7 @@ import {
   sendblueWebhookPath
 } from '../sendblue/webhook-types.js';
 import { InMemoryStatusStore } from '../status/tracker.js';
-import { validateWebhookSecret } from './security.js';
+import { validateStatusCallbackSecret, validateWebhookSecret } from './security.js';
 
 export type AppDependencies = {
   config: AgentConfig;
@@ -150,7 +150,7 @@ export function createApp(deps: AppDependencies) {
 
   app.post('/webhook/status', async (req: Request, res: Response) => {
     await observeWebhook(req, deps.webhookObserver, logger);
-    if (!validateWebhookSecret(req, deps.config)) {
+    if (!validateStatusCallbackSecret(req, deps.config)) {
       logSecretRejection(logger, req, 'status');
       res.status(401).json({ error: 'invalid webhook secret' });
       return;

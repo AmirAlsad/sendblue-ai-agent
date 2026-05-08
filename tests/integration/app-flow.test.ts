@@ -305,6 +305,21 @@ describe('agent app flow', () => {
     expect(statusStore.get('outbound-001')).toBeUndefined();
   });
 
+  it('accepts status callbacks with no signing header (Sendblue does not sign per-message status_callback URLs)', async () => {
+    const response = await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/status',
+      headers: {},
+      body: loadFixture('sendblue/status-delivered.json')
+    });
+
+    // Sendblue's per-message status callbacks arrive unsigned in production;
+    // the strict validator was rejecting every legitimate one. The lenient
+    // validator accepts unsigned requests but still rejects ones that carry
+    // an explicit but wrong header (covered above).
+    expect(response.status).toBe(200);
+  });
+
   it('rejects typing-indicator webhooks with an invalid webhook secret', async () => {
     const response = await dispatch(app, {
       method: 'POST',

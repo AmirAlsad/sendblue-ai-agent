@@ -73,7 +73,7 @@ the production path for durable buffering, dedupe, and queue state.
 
 ## Examples
 
-Try any of the examples in one command — no Sendblue account or device required:
+Try any of the examples locally — no Sendblue account or device required:
 
 ```bash
 npm run example:chat -- action-catalog        # every action type
@@ -82,10 +82,20 @@ npm run example:chat -- minimal-chat-endpoint # echo bot
 npm run example:chat -- showcase-bot          # LLM-backed (needs ANTHROPIC_API_KEY)
 ```
 
-The CLI boots the example in a child process and drops you into a REPL.
+The CLI boots the example in a child process and drops you into a REPL
+that posts properly-shaped chat requests and pretty-prints the response.
+
+To exercise the **same examples with real iMessage** to your Sendblue
+line — agent + ngrok + webhooks all wired up automatically:
+
+```bash
+# .env has SENDBLUE_*, NGROK_AUTHTOKEN, E2E_TEST_DEVICE_NUMBER
+npm run example:dev -- showcase-bot
+# message your Sendblue line from your device; the bot responds
+```
+
 See [examples/README.md](examples/README.md) for the full tour, the REPL
-commands (`/sms`, `/reset`, `/raw`), and how to graduate to the full
-hardware loop with `npm run dev:e2e`.
+commands (`/sms`, `/reset`, `/raw`), and how the hardware loop is wired.
 
 Examples in [`examples/`](examples/):
 

@@ -53,7 +53,19 @@ REPL commands: `/sms on|off` simulates an SMS-downgraded conversation,
 `/raw` toggles the full JSON response, `/exit` quits.
 
 For the **full hardware loop** — real iMessage device, real Sendblue line,
-real webhooks via ngrok — use `npm run dev:e2e`. The full set of E2E
+real webhooks via ngrok — use `npm run example:dev -- <name>`. It boots
+the chosen example as the chat endpoint, runs the agent pointing at it,
+opens an ngrok tunnel, registers Sendblue webhooks, and prints what to
+text from where:
+
+```bash
+# .env at the repo root has SENDBLUE_*, NGROK_AUTHTOKEN, E2E_TEST_DEVICE_NUMBER
+npm run example:dev -- showcase-bot
+# now message your Sendblue line from your real device — the bot responds
+```
+
+`npm run dev:e2e` is the same idea but with the built-in deterministic
+chat endpoint instead of one of the examples. The full set of E2E
 commands (`setup:e2e`, `verify:e2e`, `dev:e2e`, `sendblue:webhooks`,
 `showcase:e2e`, `probe:sendblue`) is listed in the top-level `README.md`.
 
@@ -95,8 +107,7 @@ USER_LOOKUP_URL=http://localhost:4002/lookup
 
 One endpoint, one handler per action type (`message`, `media`, `reply`,
 `reaction`, `silence`, `sendStyle`, group routing, SMS fallback). Mirrors
-the scenarios that `npm run showcase:e2e` exercises. Append `?mode=xml` to
-see the same content rendered as XML tags for the legacy parser path.
+the scenarios that `npm run showcase:e2e` exercises.
 
 ```bash
 node examples/action-catalog/server.js

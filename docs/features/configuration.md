@@ -115,6 +115,13 @@ Optional rich actions:
   `POST /api/mark-read` calls after Sendblue account support is confirmed for
   the deployed line, default `false`. Status callbacks do not include `READ`.
 - `READ_RECEIPT_DEBOUNCE_MS` - read receipt debounce before chat processing, default `250`.
+- `TYPING_START_DELAY_MS` - delay before the first outbound typing indicator
+  fires after a chat turn starts, default `500`. Sendblue's iMessage typing
+  bubble persists on the device for ~60s after the last typing call. Deferring
+  the first call means a chat endpoint that returns silence (or any other empty
+  response) within the delay never lights up a phantom bubble. Long-running
+  responses still see typing once the delay elapses. Set to `0` to restore
+  the previous eager behavior.
 - `TYPING_REFRESH_INTERVAL_MS` - refresh interval for repeated outbound typing indicators while a long-running response is in progress, default `5000`.
 - `TYPING_REFRESH_MAX_MS` - maximum typing refresh duration, default `120000`.
 

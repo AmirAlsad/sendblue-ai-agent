@@ -95,14 +95,28 @@ Note: Sendblue documents `error_code` as `int` for numeric codes;
 The conversation agent advances outbound queues on different statuses
 depending on the channel:
 
-- iMessage and RCS conversations advance on `DELIVERED`.
+- iMessage and RCS conversations advance on `DELIVERED`. Confirmed against
+  Sendblue's published RCS feature list (`/api-v2/rcs/`) — RCS reports
+  delivery confirmations.
 - SMS and downgraded (`was_downgraded === true`) conversations advance on
-  `SENT`.
+  `SENT`. Sendblue does not emit `DELIVERED` for SMS recipients.
 - `ERROR` and `DECLINED` abort the queue (v0.2 behavior).
 
 This rule is implemented in `ConversationAgent.handleStatus` and
 `ConversationAgent.successStatus`. The status tracker does not encode
 channel-aware terminality.
+
+### Status callbacks arrive unsigned
+
+Sendblue's per-message `status_callback` URLs are not signed by Sendblue with
+the `sb-signing-secret` header that account-level webhooks use. The
+`/webhook/status` route uses a lenient validator
+(`validateStatusCallbackSecret`) that accepts unsigned requests, accepts
+correctly-signed requests, and rejects requests with explicit-but-wrong
+headers. See `docs/features/webhook-security.md` for the full rule. Without
+this, every legitimate status callback would 401 and ordered delivery would
+have to wait for the per-message `OUTBOUND_DELIVERY_TIMEOUT_MS` instead of
+the actual `DELIVERED`/`SENT` event.
 
 ### Read receipts (no `READ` callback)
 

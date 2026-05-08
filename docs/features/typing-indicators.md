@@ -34,10 +34,43 @@ typing indicators because iMessage-only affordances should not be shown after
 SMS fallback.
 
 Typing refreshes are agent-controlled, not requested by rich `actions[]`.
-During processing, the agent sends an initial typing indicator and then refreshes
-on `TYPING_REFRESH_INTERVAL_MS` until the response completes, the conversation
-downgrades to SMS, a terminal send status arrives, or a newer inbound message
-interrupts the current response.
+During processing, the agent schedules an initial typing call after
+`TYPING_START_DELAY_MS` (default `500`), then refreshes on
+`TYPING_REFRESH_INTERVAL_MS` until the chat endpoint returns a response.
+
+### Why the start delay matters
+
+Sendblue's iMessage typing bubble persists on the recipient device for ~60s
+after the last typing call, regardless of whether the agent stops refreshing.
+A chat endpoint that returns silence or a fast response in under
+`TYPING_START_DELAY_MS` would otherwise leave a phantom bubble on the device for
+the next minute. With the delay, fast paths (silence, echo, deterministic
+keyword bots) skip the typing call entirely; slow paths (LLM bots) still see
+typing once the delay elapses.
+
+### Stop on response, not on delivery
+
+The agent stops typing as soon as the chat endpoint returns actions, **before**
+the first outbound message goes out. Once the response is ready and the agent
+is sending it, refreshing typing only risks lighting up a phantom bubble — the
+arriving message bubble on the device clears the typing indicator anyway.
+
+### Inter-message typing
+
+When the chat endpoint returns multiple ordered messages, the agent fires a
+single (one-shot, no refresh) typing call between consecutive sends. This gives
+the user a brief typing bubble between bubbles, mirroring how a person texting
+several messages in a row would feel on iMessage. The inter-message call still
+respects `OUTBOUND_TYPING_INDICATORS_ENABLED` and the channel/downgrade gating.
+
+### Stop conditions
+
+In addition to "chat response received", the typing scheduler also stops when:
+
+- The conversation downgrades to SMS.
+- A newer inbound message interrupts the current response.
+- A terminal send status arrives (covered separately, see status-tracking).
+- `TYPING_REFRESH_MAX_MS` elapses (cap on total refresh duration).
 
 ### Inbound typing
 
@@ -99,6 +132,7 @@ The current interpretation is:
 ## Configuration
 
 - `OUTBOUND_TYPING_INDICATORS_ENABLED`
+- `TYPING_START_DELAY_MS` (default `500` — defer the first typing call so silence/fast responses skip it entirely; set to `0` to restore the eager pre-fix behavior)
 - `TYPING_REFRESH_INTERVAL_MS`
 - `TYPING_REFRESH_MAX_MS`
 - `INBOUND_TYPING_STATE_ENABLED`

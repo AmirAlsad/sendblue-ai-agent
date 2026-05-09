@@ -10,6 +10,18 @@ export type ConversationIdentity = {
   userId: string;
   data?: unknown;
   authorized?: boolean;
+  /**
+   * Optional display-name fields surfaced to operator-managed surfaces (e.g.
+   * Sendblue's account-level Contacts API). Forwarded verbatim by
+   * `src/sendblue/contacts.ts` when contact upsert is enabled. Either field
+   * being non-empty is enough for an upsert; resolvers may return only one.
+   */
+  firstName?: string;
+  lastName?: string;
+  /** Optional Sendblue contact tags (e.g. `["agent-line:+1555…","tier:gold"]`). */
+  tags?: string[];
+  /** Optional Sendblue contact `custom_variables` map. Values are strings per docs. */
+  customVariables?: Record<string, string>;
 };
 
 export type InboundMessageItem = ChatEndpointMessage & {
@@ -32,6 +44,15 @@ export type OutboundMessageItem = {
   sentAt?: string;
   skippedAt?: string;
   skipReason?: string;
+  /**
+   * Number of transient-error retries already attempted for this queued
+   * action. Capped at `transientRetryMaxAttempts`. Persisted on the
+   * conversation record so retry state survives status-callback hops and
+   * (with Redis) process restarts.
+   */
+  retryCount?: number;
+  /** ISO timestamp of the next scheduled retry attempt, when stalled. */
+  nextRetryAt?: string;
 };
 
 export type ConversationTypingState = {
@@ -64,12 +85,28 @@ export type ConversationRecord = {
   reprocessCount: number;
   identity?: ConversationIdentity | null;
   typing?: ConversationTypingState | null;
+  /**
+   * ISO timestamp of the most recent inbound message on this conversation.
+   * Used to classify outbound as "in 24h reply window" (free under the Agent
+   * plan) vs "follow-up" (counts toward the 200/day follow-up cap). Not the
+   * same as `lastActivity`, which also advances on outbound and status
+   * callbacks.
+   */
+  lastInboundAt?: string;
   lastActivity: number;
+  /**
+   * Optional request-scoped trace identifier captured at the inbound webhook
+   * entry. Status callbacks recover it from the outbound handle mapping so
+   * follow-up logs can correlate to the original conversation event.
+   */
+  traceId?: string;
 };
 
 export type OutboundHandleMapping = {
   conversationKey: string;
   messageIndex: number;
+  /** Conversation traceId at the time this outbound was sent. */
+  traceId?: string;
 };
 
 export function directConversationKey(lineNumber: string, phoneNumber: string): string {

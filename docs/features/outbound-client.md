@@ -13,6 +13,7 @@ conversation agent orchestrates today:
 | `sendReaction`          | `POST /api/send-reaction`             | `sendblueApiV2BaseUrl`                       |
 | `markRead`              | `POST /api/mark-read`                 | `sendblueApiV2BaseUrl`                       |
 | `sendTypingIndicator`   | `POST /api/send-typing-indicator`     | `sendblueApiV2BaseUrl`                       |
+| `createContact`         | `POST /api/v2/contacts`               | `sendblueApiV2BaseUrl`                       |
 
 The client deliberately does **not** wrap the official `@sendblue/api`
 TypeScript SDK. The conversation agent's ordered-delivery and
@@ -31,7 +32,9 @@ Endpoints exposed by the official SDK but intentionally out of scope:
 - `client.groups.modify` (`POST /api/modify-group`)
 - `client.sendCarousel.send` (`POST /api/send-carousel`)
 - `client.mediaObjects.upload` (`POST /api/upload-media-object`)
-- `client.contacts.*` (`/api/v2/contacts/...`)
+- `client.contacts.list` / `get` / `update` / `delete` / `bulk` /
+  `optOut` (only `create` is implemented; the upsert hook in
+  `src/sendblue/contacts.ts` always passes `update_if_exists: true`).
 - `client.webhooks.*` (`/api/account/webhooks`)
 - `client.lines.callForwarding.*`
 - `client.v2.totp.*`
@@ -87,13 +90,26 @@ sends are not always tracked through the same ordered-delivery path.
 ### Optional fields
 
 Optional fields (`media_url`, `send_style`, `seat_id`, `part_index`, group
-`status_callback`) are forwarded only when set to a non-empty value.
-`undefined`, `null`, and empty strings are stripped before the body is
-serialized so Sendblue never sees explicit `null` values.
+`status_callback`, contact `first_name` / `last_name` / `tags` /
+`custom_variables`) are forwarded only when set to a non-empty value.
+`undefined`, `null`, empty strings, empty arrays, and empty objects are all
+stripped before the body is serialized so Sendblue never sees explicit `null`
+values.
 
 `seat_id` on `sendMessage` is the documented Sendblue field for multi-seat
 attribution (UUID or Firebase Auth subject). Set
 `SendblueOutboundMessage.seatId` to forward it; omit for the account default.
+
+### Contact upsert (`createContact`)
+
+`createContact(SendblueContactRequest)` issues
+`POST /api/v2/contacts`. Required: `number` (E.164). Optional: `firstName`,
+`lastName`, `sendblueNumber`, `tags`, `customVariables`. The
+`updateIfExists` flag toggles Sendblue's documented upsert behavior — the
+`upsertContactFromIdentity` helper in `src/sendblue/contacts.ts` always
+passes `true`. Sendblue does not document the duplicate-POST behavior
+without that flag, so callers should not omit it. See
+`docs/features/contact-upsert.md` for the agent-level orchestration.
 
 ### Error handling
 
@@ -121,10 +137,14 @@ The `errorCode` field aligns with `classifyErrorCode` in
 classification (`validation`, `rate_limit`, `blacklist`, `server`,
 `send_failed`, `status_unresolved`, `sms_limit`, `unknown`).
 
-The package does not implement automatic retry/backoff — Sendblue
-already retries inbound webhook delivery on its side, and outbound
-retries are an agent-level decision. The conversation agent currently
-logs and skips on outbound failure rather than retrying.
+The client itself does not retry, but the **conversation agent** now
+retries on transient `errorCode` categories (`rate_limit` / `server`,
+including `5509`, `5003`, `4001`, and bare 429 / 5xx) with bounded
+exponential backoff, and stalls the per-line queue on
+`SMS_LIMIT_REACHED`. See `docs/features/plan-limits.md`. Permanent
+categories (`validation`, `blacklist`) still surface to the existing
+abort/skip path. Sendblue's own inbound-webhook retry continues to fire
+independently on the inbound side.
 
 ### iMessage-only feature gating
 
@@ -200,17 +220,17 @@ parameters in your own middleware.
 - Reply intent is preserved in the chat contract but currently lands as
   a normal `send-message` — Sendblue's direct send has no documented
   reply-target field.
-- No retry/backoff. Transient categories (`5509`, `5003`,
-  `SMS_LIMIT_REACHED`) surface as `SendblueApiError`; the agent's
-  policy is to log + skip the action.
+- The client itself does not retry; bounded retry/stall policy lives at
+  the conversation-agent layer (`docs/features/plan-limits.md`).
 - Group-send `status_callback` is optional in the request and the
   conversation agent passes one only for ordered-delivery flows; group
   status tracking is not as load-bearing as direct sends.
 - `send-typing-indicator` requires a prior conversation with the
   recipient (Sendblue returns 400 `No route mapping found` otherwise).
-- Endpoints not implemented yet but documented by Sendblue:
-  `evaluate-service`, `send-carousel`, `modify-group`,
-  `upload-media-object`, the v2 `messages` resource, `mark-read`-style
-  contact opt-in / opt-out, webhook registration CRUD. See
+- Only the `create` half of Sendblue's contacts surface is implemented.
+  Other documented endpoints (`evaluate-service`, `send-carousel`,
+  `modify-group`, `upload-media-object`, the v2 `messages` resource,
+  `contacts/{phone}` get/update/delete, `contacts/bulk`, `contacts/opt-out`,
+  webhook registration CRUD) remain out of scope. See
   `scripts/e2e/sendblue-webhooks.ts` for the one place we currently
   call `/api/account/webhooks` outside this client.

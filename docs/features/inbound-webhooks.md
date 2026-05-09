@@ -11,7 +11,10 @@ messages into the conversation state machine.
 
 The Express app exposes these endpoints:
 
-- `GET /health`
+- `GET /health` — liveness (uptime, version, node version).
+- `GET /ready` — Redis ping + buffer scheduler stats; 503 on dependency failure.
+- `GET /metrics` — Prometheus text format, gated by `ADMIN_API_TOKEN`.
+- `GET /admin/limits`, `GET /admin/conversations/:key`, `GET /admin/status/:messageHandle`, `GET /admin/queue`, `GET /admin/dedupe?messageHandle=...` — operator introspection, gated by `ADMIN_API_TOKEN`. PII redacted by default; `?reveal=true` unmasks. See `docs/features/operational-visibility.md`.
 - `POST /webhook/receive`
 - `POST /webhook/status`
 - `POST /webhook/typing-indicator`
@@ -19,6 +22,13 @@ The Express app exposes these endpoints:
 - `POST /webhook/line-blocked`
 - `POST /webhook/line-assigned`
 - `POST /webhook/contact-created`
+
+A `traceMiddleware` runs ahead of every handler. It accepts an inbound
+`x-trace-id` header (well-formed values are reused; otherwise a UUID is
+generated), echoes the value back on the response, and stores a pino
+child logger plus traceId on `res.locals`. Each webhook route plucks the
+`RequestContext` and threads it into the conversation agent so the
+traceId surfaces on every log line emitted while processing the request.
 
 `/webhook/receive` requires `from_number`, `to_number`, `message_handle`, and
 a string `content` field; the latter may be an empty string because Sendblue
@@ -50,6 +60,21 @@ direct:{sendblueLine}:{phoneNumber}
 
 `sendblueLine` comes from `sendblue_number`, then `to_number`, then
 `SENDBLUE_FROM_NUMBER`. The sender phone number comes from `from_number`.
+
+After dedupe + identity resolution + the optional `validUserRequired`
+gate, the agent fires two best-effort hooks:
+
+- **`LimitTracker.recordInbound`** (always on when a tracker is wired)
+  bumps the per-line distinct-inbound counter and persists
+  `last_inbound_at` for the 24h reply-window classification on outbound.
+  See `docs/features/plan-limits.md`.
+- **Sendblue contact upsert** (`SENDBLUE_CONTACTS_ENABLED=true`) runs
+  fire-and-forget; for direct inbound it upserts the from-number and
+  for **invoked, authorized** group inbound it iterates
+  `participants[]`. Non-invoked groups and unauthorized invokers return
+  early before the upsert hook fires, matching the "groups stay silent
+  unless addressed" rule. The upsert never blocks buffering or chat
+  dispatch. See `docs/features/contact-upsert.md`.
 
 Groups are address-gated. If `group_id` is present or `message_type` is
 `group`, the webhook is acknowledged and deduped. Unaddressed group messages
@@ -105,6 +130,9 @@ configured, webhook secret validation is skipped.
 - `INBOUND_TYPING_STATE_ENABLED` - controls whether typing webhooks update conversation state.
 - `AGENT_DISPLAY_NAME` - name used to detect addressed group messages.
 - `VALID_USER_REQUIRED` - silently acknowledges unauthorized invokers when enabled.
+- `SENDBLUE_CONTACTS_ENABLED` - opts the inbound path into the
+  fire-and-forget Sendblue contact upsert hook. See
+  `docs/features/contact-upsert.md`.
 
 ## Known limitations
 

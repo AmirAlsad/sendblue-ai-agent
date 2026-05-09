@@ -43,6 +43,29 @@ export function testConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
       reaction: 'reaction',
       reply: 'reply'
     },
+    sendblueContactsEnabled: false,
+    sendblueContactsDefaultTags: [],
+    sendblueContactsDedupeTtlSeconds: 86400,
+    // Disable pre-emptive pacing in unit/integration tests by default —
+    // the 1/s gate uses real setTimeout, which deadlocks tests that drive
+    // multiple back-to-back outbound sends under vi.useFakeTimers. Tests
+    // that need to verify pacing must override this.
+    outboundRateLimitPerSecond: 0,
+    outboundRateLimitPerHour: 2000,
+    outboundRateLimitPerDay: 4000,
+    inboundContactsPerDayWarnThreshold: 800,
+    inboundContactsPerDayLimit: 1000,
+    followUpDailyWarnThreshold: 160,
+    followUpDailyLimit: 200,
+    replyWindowHours: 24,
+    transientRetryMaxAttempts: 3,
+    transientRetryBaseMs: 1000,
+    transientRetryMaxMs: 60000,
+    smsLimitRetryIntervalMs: 3600000,
+    smsLimitMaxAttempts: 24,
+    adminApiToken: undefined,
+    metricsLabelCardinalityLimit: 1000,
+    readyRedisTimeoutMs: 500,
     ...overrides
   };
 }

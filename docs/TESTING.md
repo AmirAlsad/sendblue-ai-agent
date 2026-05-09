@@ -10,11 +10,42 @@ npm test
 
 This runs:
 
-- `tests/unit`: parser, config, status, chat contract, and Sendblue client tests.
-- `tests/integration`: real Express app flow with injected fake chat and Sendblue clients.
+- `tests/unit`: parser, config, status, chat contract, Sendblue client,
+  contact-upsert helpers, and limit-tracker / retry tests.
+- `tests/integration`: real Express app flow with injected fake chat and
+  Sendblue clients, including the limit-flow retry/stall and contact-upsert
+  flows.
 
 These tests do not require Sendblue credentials, hardware, ngrok, or
 Messages.app access.
+
+### Optional: live Redis smoke tests
+
+Two integration suites are gated on `TEST_REDIS_URL` and skipped by
+default:
+
+- `tests/integration/limits-redis-store.test.ts` exercises the
+  Lua-managed pacing slot, the Lua-atomic `INCR`+`EXPIRE` for time-window
+  buckets, the `SADD`/`SCARD` distinct-inbound counters, the SMS-stall
+  JSON round-trip (including the new `conversationKey` field), and the
+  SCAN-based `listSmsLimitStalls` enumeration.
+- `tests/integration/recovery.test.ts` exercises
+  `ConversationAgent.recoverPendingRetries()`: directly persists a
+  conversation in `'sending'` state with a `nextRetryAt`/`retryCount`
+  and confirms the recovered timer fires; persists a stranded SMS
+  stall and confirms recovery clears it; and confirms in-memory
+  recovery is a no-op.
+
+Opt in by pointing `TEST_REDIS_URL` at a Redis you do not mind being
+`FLUSHDB`'d:
+
+```bash
+TEST_REDIS_URL=redis://localhost:6379/15 npm run test:integration
+```
+
+Both suites run `FLUSHDB` between cases, so use a non-default DB index
+(`/15` above) to avoid clobbering app data on DB 0. Do not point this
+at production Redis.
 
 ## Repo-Managed E2E Setup
 

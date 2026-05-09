@@ -4,9 +4,12 @@ import type { ChatClient } from '../../src/chat/client.js';
 import type { ChatEndpointRequest, ChatEndpointResponse } from '../../src/chat/types.js';
 import { createApp } from '../../src/http/app.js';
 import type { IdentityResolver } from '../../src/identity/resolver.js';
+import type { ConversationIdentity } from '../../src/conversation/types.js';
 import type { SendblueClient } from '../../src/sendblue/client.js';
 import type {
   SendblueActionResult,
+  SendblueContactRequest,
+  SendblueContactResult,
   SendblueMarkReadRequest,
   SendblueOutboundGroupMessage,
   SendblueOutboundMessage,
@@ -35,6 +38,7 @@ class FakeSendblueClient implements SendblueClient {
   reactionCalls: SendblueReactionRequest[] = [];
   readCalls: SendblueMarkReadRequest[] = [];
   typingCalls: SendblueTypingIndicator[] = [];
+  contactCalls: SendblueContactRequest[] = [];
 
   async sendMessage(message: SendblueOutboundMessage): Promise<SendblueSendResult> {
     this.calls.push(message);
@@ -70,6 +74,11 @@ class FakeSendblueClient implements SendblueClient {
   async sendTypingIndicator(indicator: SendblueTypingIndicator): Promise<SendblueTypingIndicatorResult> {
     this.typingCalls.push(indicator);
     return { status: 'SENT', raw: { ok: true } };
+  }
+
+  async createContact(contact: SendblueContactRequest): Promise<SendblueContactResult> {
+    this.contactCalls.push(contact);
+    return { number: contact.number, raw: { ok: true } };
   }
 }
 
@@ -1069,6 +1078,203 @@ describe('conversation intelligence', () => {
     });
 
     // Queue must abort: the second message must NOT be sent.
+    expect(sendblueClient.calls).toHaveLength(1);
+  });
+});
+
+describe('contact upsert on inbound', () => {
+  const baseConfig = testConfig({
+    bufferBaseTimeoutMs: 25,
+    bufferMaxTimeoutMs: 25,
+    bufferNoiseMaxDeviation: 0,
+    sendblueContactsEnabled: true,
+    sendblueContactsDefaultTags: ['agent']
+  });
+  let chatClient: QueueChatClient;
+  let sendblueClient: FakeSendblueClient;
+  let close: () => Promise<void>;
+  let app: ReturnType<typeof createApp>['app'];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    chatClient = new QueueChatClient();
+    sendblueClient = new FakeSendblueClient();
+  });
+
+  afterEach(async () => {
+    await close();
+    vi.useRealTimers();
+  });
+
+  function bootWithResolver(resolver: IdentityResolver, configOverrides: Partial<typeof baseConfig> = {}) {
+    const finalConfig = { ...baseConfig, ...configOverrides };
+    const created = createApp({
+      config: finalConfig,
+      chatClient,
+      sendblueClient,
+      identityResolver: resolver,
+      logger: pino({ level: 'silent' })
+    });
+    app = created.app;
+    close = created.close;
+    return finalConfig;
+  }
+
+  it('upserts a contact for direct inbound when identity returns a name', async () => {
+    const resolver: IdentityResolver = {
+      resolveByPhone: vi.fn().mockResolvedValue({
+        userId: 'u-1',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        tags: ['tier:gold']
+      })
+    };
+    const finalConfig = bootWithResolver(resolver);
+    chatClient.responses.push({ silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [finalConfig.sendblueWebhookSecretHeader]: finalConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'contact-direct-1', from_number: '+15551110001' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    // Drain microtasks for the fire-and-forget upsert.
+    await vi.runAllTimersAsync();
+
+    expect(sendblueClient.contactCalls).toHaveLength(1);
+    expect(sendblueClient.contactCalls[0]).toMatchObject({
+      number: '+15551110001',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      sendblueNumber: '+15552220000',
+      tags: ['agent', 'tier:gold'],
+      updateIfExists: true
+    });
+  });
+
+  it('skips contact upsert when identity has no name', async () => {
+    const resolver: IdentityResolver = {
+      resolveByPhone: vi.fn().mockResolvedValue({ userId: 'u-2', data: { plan: 'pro' } })
+    };
+    const finalConfig = bootWithResolver(resolver);
+    chatClient.responses.push({ silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [finalConfig.sendblueWebhookSecretHeader]: finalConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'contact-noname-1' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.runAllTimersAsync();
+
+    expect(sendblueClient.contactCalls).toHaveLength(0);
+  });
+
+  it('skips contact upsert when SENDBLUE_CONTACTS_ENABLED is false', async () => {
+    const resolver: IdentityResolver = {
+      resolveByPhone: vi.fn().mockResolvedValue({ userId: 'u-3', firstName: 'Ada' })
+    };
+    const finalConfig = bootWithResolver(resolver, { sendblueContactsEnabled: false });
+    chatClient.responses.push({ silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [finalConfig.sendblueWebhookSecretHeader]: finalConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'contact-disabled-1' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.runAllTimersAsync();
+
+    expect(sendblueClient.contactCalls).toHaveLength(0);
+  });
+
+  it('dedupes per (line, number): second inbound from the same number does not re-upsert', async () => {
+    const resolver: IdentityResolver = {
+      resolveByPhone: vi.fn().mockResolvedValue({ userId: 'u-1', firstName: 'Ada' })
+    };
+    const finalConfig = bootWithResolver(resolver);
+    chatClient.responses.push({ silence: true }, { silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [finalConfig.sendblueWebhookSecretHeader]: finalConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'dedupe-1', from_number: '+15551110001' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.runAllTimersAsync();
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [finalConfig.sendblueWebhookSecretHeader]: finalConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'dedupe-2', from_number: '+15551110001' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.runAllTimersAsync();
+
+    expect(sendblueClient.contactCalls).toHaveLength(1);
+  });
+
+  it('iterates group participants, gates each by identity name, skips lineNumber and self', async () => {
+    const known = new Map<string, ConversationIdentity>([
+      ['+15551110002', { userId: 'u-2', firstName: 'Ada' }],
+      ['+15551110003', { userId: 'u-3', firstName: 'Grace' }]
+    ]);
+    const resolver: IdentityResolver = {
+      resolveByPhone: vi.fn().mockImplementation(async ({ phoneNumber }: { phoneNumber: string }) => {
+        return known.get(phoneNumber) ?? null;
+      })
+    };
+    const finalConfig = bootWithResolver(resolver, {
+      // Enable group invocation by default-display-name mention so the
+      // group flow doesn't return early.
+      agentDisplayName: 'sb-agent'
+    });
+    chatClient.responses.push({ silence: true });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [finalConfig.sendblueWebhookSecretHeader]: finalConfig.sendblueWebhookSecret! },
+      body: {
+        ...loadFixture<Record<string, unknown>>('sendblue/receive-media-group.json'),
+        message_handle: 'group-contact-1',
+        from_number: '+15551110002',
+        content: '@sb-agent hello',
+        // Include the line number to verify it's skipped.
+        participants: ['+15551110002', '+15551110003', '+15552220000']
+      }
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.runAllTimersAsync();
+
+    const numbers = sendblueClient.contactCalls.map(c => c.number).sort();
+    expect(numbers).toEqual(['+15551110002', '+15551110003']);
+  });
+
+  it('does not block message processing when contact upsert throws', async () => {
+    const resolver: IdentityResolver = {
+      resolveByPhone: vi.fn().mockResolvedValue({ userId: 'u-1', firstName: 'Ada' })
+    };
+    const finalConfig = bootWithResolver(resolver);
+    sendblueClient.createContact = vi.fn().mockRejectedValue(new Error('contacts api down'));
+    chatClient.responses.push({ messages: ['hello back'] });
+
+    await dispatch(app, {
+      method: 'POST',
+      path: '/webhook/receive',
+      headers: { [finalConfig.sendblueWebhookSecretHeader]: finalConfig.sendblueWebhookSecret! },
+      body: receivePayload({ message_handle: 'contact-throw-1' })
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    await vi.runAllTimersAsync();
+
+    // Chat call still happened; outbound message was still sent.
+    expect(chatClient.calls).toHaveLength(1);
     expect(sendblueClient.calls).toHaveLength(1);
   });
 });

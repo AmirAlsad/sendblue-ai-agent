@@ -215,3 +215,32 @@ export type SendblueActionResult = {
   number?: string;
   raw: unknown;
 };
+
+/**
+ * Create-contact request shape, mapped 1:1 to the documented Sendblue body
+ * (`POST /api/v2/contacts`). Field naming mirrors the rest of this package
+ * (camelCase) and is converted to snake_case at the client boundary.
+ *
+ * Only `number` is required; Sendblue's docs say `update_if_exists` makes the
+ * call upsert-by-phone. The helpers in `src/sendblue/contacts.ts` always pass
+ * `updateIfExists: true` because Sendblue does not document the duplicate-POST
+ * behavior without it.
+ */
+export type SendblueContactRequest = {
+  /** Contact phone number in E.164 (e.g. `+15551234567`). */
+  number: string;
+  firstName?: string;
+  lastName?: string;
+  /** Sendblue line associated with the contact (E.164). Optional per docs. */
+  sendblueNumber?: string;
+  tags?: string[];
+  customVariables?: Record<string, string>;
+  /** When true, Sendblue upserts an existing contact instead of erroring. */
+  updateIfExists?: boolean;
+};
+
+export type SendblueContactResult = {
+  /** Echoed E.164 from the response body when present. */
+  number?: string;
+  raw: unknown;
+};

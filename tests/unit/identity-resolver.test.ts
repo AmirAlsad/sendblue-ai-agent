@@ -61,6 +61,58 @@ describe('HttpIdentityResolver', () => {
     });
   });
 
+  it('forwards optional contact fields (firstName, lastName, tags, customVariables)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          userId: 'user-2',
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          tags: ['tier:gold', 'beta'],
+          customVariables: { plan: 'agent', cohort: 'alpha' }
+        }),
+        { status: 200 }
+      )
+    );
+    const resolver = makeResolver();
+
+    await expect(resolver.resolveByPhone(sampleInput)).resolves.toEqual({
+      userId: 'user-2',
+      data: undefined,
+      authorized: undefined,
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      tags: ['tier:gold', 'beta'],
+      customVariables: { plan: 'agent', cohort: 'alpha' }
+    });
+  });
+
+  it('drops blank or non-string optional contact fields silently', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          userId: 'user-3',
+          firstName: '   ',
+          lastName: 42,
+          tags: ['a', '', 7, 'b'],
+          customVariables: { good: 'yes', bad: 5 }
+        }),
+        { status: 200 }
+      )
+    );
+    const resolver = makeResolver();
+
+    await expect(resolver.resolveByPhone(sampleInput)).resolves.toEqual({
+      userId: 'user-3',
+      data: undefined,
+      authorized: undefined,
+      firstName: undefined,
+      lastName: undefined,
+      tags: ['a', 'b'],
+      customVariables: { good: 'yes' }
+    });
+  });
+
   it('returns null without calling fetch when USER_LOOKUP_URL is unset', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const resolver = new HttpIdentityResolver(testConfig({ userLookupUrl: undefined }));

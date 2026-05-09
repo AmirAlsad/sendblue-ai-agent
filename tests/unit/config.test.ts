@@ -265,4 +265,79 @@ describe('loadConfig', () => {
       expect(loadConfig({ ...baseEnv, SENDBLUE_FROM_NUMBER: value }).sendblueFromNumber).toBe(value);
     }
   });
+
+  describe('round-2 validation', () => {
+    const baseRequired = {
+      PUBLIC_BASE_URL: 'https://agent.example.test',
+      CHAT_ENDPOINT_URL: 'https://chat.example.test/chat',
+      SENDBLUE_API_KEY_ID: 'key-id',
+      SENDBLUE_API_SECRET_KEY: 'secret-key',
+      SENDBLUE_FROM_NUMBER: '+15552220000'
+    };
+
+    it('rejects SENDBLUE_CONTACTS_DEDUPE_TTL_SECONDS=0', () => {
+      expect(() =>
+        loadConfig({ ...baseRequired, SENDBLUE_CONTACTS_DEDUPE_TTL_SECONDS: '0' })
+      ).toThrow(/SENDBLUE_CONTACTS_DEDUPE_TTL_SECONDS/);
+    });
+
+    it('rejects SMS_LIMIT_RETRY_INTERVAL_MS=0 and SMS_LIMIT_MAX_ATTEMPTS=0', () => {
+      expect(() =>
+        loadConfig({ ...baseRequired, SMS_LIMIT_RETRY_INTERVAL_MS: '0' })
+      ).toThrow(/SMS_LIMIT_RETRY_INTERVAL_MS/);
+      expect(() =>
+        loadConfig({ ...baseRequired, SMS_LIMIT_MAX_ATTEMPTS: '0' })
+      ).toThrow(/SMS_LIMIT_MAX_ATTEMPTS/);
+    });
+
+    it('rejects warn > limit for inbound contacts threshold', () => {
+      expect(() =>
+        loadConfig({
+          ...baseRequired,
+          INBOUND_CONTACTS_PER_DAY_WARN_THRESHOLD: '900',
+          INBOUND_CONTACTS_PER_DAY_LIMIT: '500'
+        })
+      ).toThrow(/INBOUND_CONTACTS_PER_DAY_WARN_THRESHOLD=900 must be <= INBOUND_CONTACTS_PER_DAY_LIMIT=500/);
+    });
+
+    it('rejects warn > limit for follow-up daily threshold', () => {
+      expect(() =>
+        loadConfig({
+          ...baseRequired,
+          FOLLOW_UP_DAILY_WARN_THRESHOLD: '300',
+          FOLLOW_UP_DAILY_LIMIT: '200'
+        })
+      ).toThrow(/FOLLOW_UP_DAILY_WARN_THRESHOLD=300 must be <= FOLLOW_UP_DAILY_LIMIT=200/);
+    });
+
+    it('rejects hour > day for outbound rate limits', () => {
+      expect(() =>
+        loadConfig({
+          ...baseRequired,
+          OUTBOUND_RATE_LIMIT_PER_HOUR: '5000',
+          OUTBOUND_RATE_LIMIT_PER_DAY: '4000'
+        })
+      ).toThrow(/OUTBOUND_RATE_LIMIT_PER_HOUR=5000 must be <= OUTBOUND_RATE_LIMIT_PER_DAY=4000/);
+    });
+
+    it('rejects transient base > max', () => {
+      expect(() =>
+        loadConfig({
+          ...baseRequired,
+          TRANSIENT_RETRY_BASE_MS: '100000',
+          TRANSIENT_RETRY_MAX_MS: '60000'
+        })
+      ).toThrow(/TRANSIENT_RETRY_BASE_MS=100000 must be <= TRANSIENT_RETRY_MAX_MS=60000/);
+    });
+
+    it('accepts equal warn and limit values', () => {
+      const config = loadConfig({
+        ...baseRequired,
+        INBOUND_CONTACTS_PER_DAY_WARN_THRESHOLD: '500',
+        INBOUND_CONTACTS_PER_DAY_LIMIT: '500'
+      });
+      expect(config.inboundContactsPerDayWarnThreshold).toBe(500);
+      expect(config.inboundContactsPerDayLimit).toBe(500);
+    });
+  });
 });

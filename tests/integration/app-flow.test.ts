@@ -6,6 +6,8 @@ import type { ChatEndpointRequest, ChatEndpointResponse } from '../../src/chat/t
 import type { SendblueClient } from '../../src/sendblue/client.js';
 import type {
   SendblueActionResult,
+  SendblueContactRequest,
+  SendblueContactResult,
   SendblueMarkReadRequest,
   SendblueOutboundGroupMessage,
   SendblueOutboundMessage,
@@ -82,6 +84,10 @@ class FakeSendblueClient implements SendblueClient {
   async sendTypingIndicator(indicator: SendblueTypingIndicator): Promise<SendblueTypingIndicatorResult> {
     this.typingCalls.push(indicator);
     return { status: 'SENT', errorMessage: null, raw: { ok: true } };
+  }
+
+  async createContact(contact: SendblueContactRequest): Promise<SendblueContactResult> {
+    return { number: contact.number, raw: { ok: true } };
   }
 }
 
@@ -536,7 +542,11 @@ describe('agent app flow', () => {
     const response = await dispatch(app, { method: 'GET', path: '/health' });
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ ok: true });
+    expect(response.body).toMatchObject({ ok: true });
+    const body = response.body as { uptime_s: number; version: string; node_version: string };
+    expect(typeof body.uptime_s).toBe('number');
+    expect(typeof body.version).toBe('string');
+    expect(typeof body.node_version).toBe('string');
   });
 
   it('leaves room for status callback retries without duplicate adjacent history', async () => {

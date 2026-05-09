@@ -7,6 +7,8 @@ import type { ObservedWebhookEnvelope } from '../../../src/http/app.js';
 import type { SendblueClient } from '../../../src/sendblue/client.js';
 import type {
   SendblueActionResult,
+  SendblueContactRequest,
+  SendblueContactResult,
   SendblueMarkReadRequest,
   SendblueOutboundGroupMessage,
   SendblueOutboundMessage,
@@ -70,7 +72,7 @@ export type ShowcaseCaptureSink = {
 };
 
 export type ShowcaseSendblueCall = {
-  kind: 'message' | 'group-message' | 'reaction' | 'read-receipt' | 'typing-indicator';
+  kind: 'message' | 'group-message' | 'reaction' | 'read-receipt' | 'typing-indicator' | 'create-contact';
   at: string;
   payload: unknown;
   ok?: boolean;
@@ -536,6 +538,20 @@ export class InstrumentedSendblueClient implements SendblueClient {
     const call = this.record('typing-indicator', indicator);
     try {
       const result = await this.inner.sendTypingIndicator(indicator);
+      call.ok = true;
+      call.result = result;
+      return result;
+    } catch (error) {
+      call.ok = false;
+      call.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
+  }
+
+  async createContact(contact: SendblueContactRequest): Promise<SendblueContactResult> {
+    const call = this.record('create-contact', contact);
+    try {
+      const result = await this.inner.createContact(contact);
       call.ok = true;
       call.result = result;
       return result;

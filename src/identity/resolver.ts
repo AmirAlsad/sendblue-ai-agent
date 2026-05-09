@@ -16,12 +16,16 @@ export type IdentityResolver = {
  *
  * Accepted shapes:
  * - `null` -> resolves to `null` (no identity for this phone).
- * - `{ userId: string; data?: unknown; authorized?: boolean }` -> resolved identity.
+ * - `{ userId: string; data?: unknown; authorized?: boolean; firstName?: string;
+ *     lastName?: string; tags?: string[]; customVariables?: Record<string,string> }`
+ *   -> resolved identity. The optional name/tag/custom-variable fields are
+ *   forwarded to Sendblue's Contacts API by `src/sendblue/contacts.ts` when
+ *   contact upsert is enabled.
  *
  * Anything else (arrays, primitives, missing/blank `userId`) is treated as a null
  * identity rather than throwing, so a misbehaving resolver upstream cannot block
- * message delivery. The package does not interpret `data`; it is forwarded
- * opaquely to the chat endpoint.
+ * message delivery. Invalid optional-field types are dropped silently rather than
+ * throwing — the same posture as `authorized`.
  */
 function normalizeIdentity(payload: unknown): ConversationIdentity | null {
   if (payload === null) return null;
@@ -33,8 +37,31 @@ function normalizeIdentity(payload: unknown): ConversationIdentity | null {
   return {
     userId: record.userId,
     data: record.data,
-    authorized: typeof record.authorized === 'boolean' ? record.authorized : undefined
+    authorized: typeof record.authorized === 'boolean' ? record.authorized : undefined,
+    firstName: nonEmptyString(record.firstName),
+    lastName: nonEmptyString(record.lastName),
+    tags: stringArray(record.tags),
+    customVariables: stringMap(record.customVariables)
   };
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const filtered = value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '');
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+function stringMap(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === 'string') out[key] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**

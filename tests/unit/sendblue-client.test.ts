@@ -433,4 +433,136 @@ describe('HttpSendblueClient', () => {
       client.sendTypingIndicator({ toNumber: '+15551110001' })
     ).rejects.toThrow(/fetch failed/);
   });
+
+  it('creates a contact via /api/v2/contacts on the v2 base URL with snake_case body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'CREATED', number: '+15551110001' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    const result = await client.createContact({
+      number: '+15551110001',
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      sendblueNumber: '+15552220000',
+      tags: ['agent', 'beta'],
+      customVariables: { plan: 'agent', cohort: 'alpha' },
+      updateIfExists: true
+    });
+
+    expect(result.number).toBe('+15551110001');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api-v2.sendblue.example.test/api/v2/contacts',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'sb-api-key-id': 'test-key-id',
+          'sb-api-secret-key': 'test-secret-key'
+        }),
+        body: JSON.stringify({
+          number: '+15551110001',
+          first_name: 'Ada',
+          last_name: 'Lovelace',
+          sendblue_number: '+15552220000',
+          tags: ['agent', 'beta'],
+          custom_variables: { plan: 'agent', cohort: 'alpha' },
+          update_if_exists: true
+        })
+      })
+    );
+  });
+
+  it('omits absent / empty optional contact fields from the body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'CREATED', number: '+15551110001' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await client.createContact({
+      number: '+15551110001',
+      firstName: undefined,
+      lastName: '',
+      tags: [],
+      customVariables: {},
+      updateIfExists: true
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string) as Record<string, unknown>;
+    expect(body).toEqual({ number: '+15551110001', update_if_exists: true });
+    expect(body).not.toHaveProperty('first_name');
+    expect(body).not.toHaveProperty('last_name');
+    expect(body).not.toHaveProperty('tags');
+    expect(body).not.toHaveProperty('custom_variables');
+  });
+
+  it('reads contact number from the live wrapped { status, contact: { phone } } response shape', async () => {
+    // Real Sendblue response shape verified on 2026-05-09 via
+    // `npm run probe:contacts`: the nested contact uses `phone`, not `number`.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: 'OK',
+        contact: {
+          phone: '+15551110001',
+          first_name: 'Ada',
+          last_name: 'Lovelace',
+          sendblue_number: '+15552220000',
+          tags: ['probe'],
+          created_at: '2026-05-09T00:00:00.000Z'
+        }
+      })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    const result = await client.createContact({ number: '+15551110001', updateIfExists: true });
+    expect(result.number).toBe('+15551110001');
+  });
+
+  it('falls back to the flat { number } response shape if Sendblue ever returns it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'OK', number: '+15551110001' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    const result = await client.createContact({ number: '+15551110001', updateIfExists: true });
+    expect(result.number).toBe('+15551110001');
+  });
+
+  it('rejects create-contact without a number before issuing a request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    await expect(client.createContact({ number: '', updateIfExists: true })).rejects.toThrow(/number/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('throws SendblueApiError on non-2xx for create-contact (e.g. 429 contacts rate-limit)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ status: 'ERROR', error_code: '5509', error_message: 'Rate limit exceeded' })
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new HttpSendblueClient(testConfig());
+    let thrown: unknown;
+    try {
+      await client.createContact({ number: '+15551110001', updateIfExists: true });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(SendblueApiError);
+    const apiError = thrown as SendblueApiError;
+    expect(apiError.operation).toBe('create-contact');
+    expect(apiError.httpStatus).toBe(429);
+    expect(apiError.errorCode).toBe('5509');
+  });
 });

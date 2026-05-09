@@ -50,6 +50,20 @@ export type {
   SendblueTypingIndicatorResult
 } from './sendblue/types.js';
 export { applyStatusUpdate, InMemoryStatusStore, TERMINAL_STATUSES } from './status/tracker.js';
+export {
+  InMemoryMetricsCollector,
+  NoopMetricsCollector,
+  type MetricsCollector,
+  type Counter,
+  type Gauge,
+  type Histogram,
+  type LabelValues,
+  type MetricsSnapshot
+} from './metrics/collector.js';
+export { renderPrometheus, PROMETHEUS_CONTENT_TYPE } from './metrics/prometheus.js';
+export { createAgentMetrics, type AgentMetrics } from './metrics/registry.js';
+export { traceMiddleware, requestContextFromLocals, type RequestContext } from './http/trace.js';
+export { redactPhone, redactContent, redactConversationRecord, redactStatusRecord } from './http/redaction.js';
 
 export function start(config: AgentConfig = loadConfig()) {
   const { app, close } = createApp({

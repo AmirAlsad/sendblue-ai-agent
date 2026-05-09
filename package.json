@@ -21,6 +21,7 @@
     "capture:guided": "node --import tsx scripts/e2e/guided-capture.ts",
     "showcase:e2e": "node --import tsx scripts/e2e/showcase.ts",
     "probe:sendblue": "node --import tsx scripts/e2e/probe-sendblue.ts",
+    "probe:contacts": "node --import tsx scripts/e2e/probe-contacts.ts",
     "example:chat": "node --import tsx scripts/example-chat.ts",
     "example:dev": "node --import tsx scripts/e2e/example-dev.ts",
     "test": "npm run test:unit && npm run test:integration",

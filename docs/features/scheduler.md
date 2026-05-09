@@ -9,15 +9,26 @@ by the conversation agent to coalesce rapid-fire inbound bursts (see
 
 ## How it works
 
-The `BufferScheduler` interface has three methods:
+The `BufferScheduler` interface has three methods plus introspection
+hooks for `/ready` and `/admin/queue`:
 
-- `schedule(conversationKey, delayMs)` — register a fresh delayed
-  callback for the conversation. Replaces any existing scheduled callback
-  for the same key (no need to cancel manually before scheduling).
+- `schedule(conversationKey, delayMs, options?)` — register a fresh
+  delayed callback for the conversation. Replaces any existing scheduled
+  callback for the same key (no need to cancel manually before
+  scheduling). The optional `options.traceId` is persisted on the job
+  payload so the worker can rehydrate a child logger when the buffer
+  fires.
 - `cancel(conversationKey)` — remove a pending callback (e.g. when the
   conversation has just been flushed by another path).
 - `setHandler(handler)` — wires the callback the scheduler invokes when
-  a delay elapses. The agent registers this once at boot.
+  a delay elapses. The handler receives `(conversationKey, options?)`
+  and the agent uses `options.traceId` to rebuild the original
+  request-scoped logger. The agent registers this once at boot.
+- `kind` — readonly `'in_memory' | 'bullmq'` discriminator surfaced by
+  `/ready` and `/admin/queue`.
+- `getStats()` — returns counts (`active`, `waiting`, `delayed`,
+  `failed` for BullMQ; `pending` for in-memory). Used by `/ready` and
+  `/admin/queue` only; cheap to call.
 
 Two implementations satisfy the contract:
 
@@ -66,3 +77,7 @@ Selection happens in `createApp` based on whether `REDIS_URL` is set.
   operability; tune if your environment has noisier failures.
 - Worker connections are separate `Redis` instances from the queue
   connection (BullMQ requirement). Both must be on `REDIS_URL`.
+- The scheduler emits `buffer_jobs_total{event}` metrics
+  (`scheduled` / `cancelled` / `fired` / `failed`) when wired with a
+  `MetricsCollector` from `createApp`. See
+  `docs/features/operational-visibility.md`.

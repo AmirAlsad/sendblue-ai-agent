@@ -39,15 +39,24 @@ The HTTP resolver posts:
 }
 ```
 
-It accepts either `null` or an object with a non-empty `userId` string and an
-optional opaque `data` field:
+It accepts either `null` or an object with a non-empty `userId` string. Optional
+fields are forwarded:
+
+- `data` — opaque, passed through to the chat endpoint untouched.
+- `authorized` — boolean. When `false` and `VALID_USER_REQUIRED=true`, the agent
+  acks the inbound silently without calling the chat endpoint.
+- `firstName`, `lastName`, `tags`, `customVariables` — used by the optional
+  Sendblue contact upsert flow (see `docs/features/contact-upsert.md`). Ignored
+  when `SENDBLUE_CONTACTS_ENABLED=false`.
 
 ```json
 {
   "userId": "user-123",
-  "data": {
-    "tier": "gold"
-  }
+  "data": { "tier": "gold" },
+  "firstName": "Ada",
+  "lastName": "Lovelace",
+  "tags": ["tier:gold", "beta"],
+  "customVariables": { "plan": "agent" }
 }
 ```
 

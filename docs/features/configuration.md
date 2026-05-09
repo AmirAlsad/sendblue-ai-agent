@@ -24,13 +24,17 @@ does not survive process restarts and cannot coordinate multiple instances.
 | File | Role |
 | --- | --- |
 | `src/config/env.ts` | Environment parsing and defaults |
-| `src/http/app.ts` | Chooses Redis/BullMQ or in-memory dependencies |
+| `src/http/app.ts` | Chooses Redis/BullMQ or in-memory dependencies; mounts `/health`, `/ready`, `/metrics` |
 | `src/http/security.ts` | Optional webhook secret validation |
+| `src/http/auth.ts` | Shared `validateAdminToken` for `/metrics` and `/admin/*` |
+| `src/http/admin.ts` | Token-gated introspection (limits, conversations, status, queue, dedupe) |
+| `src/http/trace.ts` | Per-request `traceId` middleware and `RequestContext` |
 | `src/sendblue/client.ts` | Sendblue API base URL, credentials, outbound message and typing calls |
 | `src/chat/client.ts` | Chat endpoint URL and request timeout |
 | `src/conversation/redis-store.ts` | Redis key storage and TTLs |
-| `src/conversation/scheduler.ts` | BullMQ queue name and timer behavior |
+| `src/conversation/scheduler.ts` | BullMQ queue name, timer behavior, traceId payload |
 | `src/identity/resolver.ts` | Optional HTTP identity resolver |
+| `src/metrics/` | In-memory Prometheus collector + named metrics registry |
 
 ## Configuration
 
@@ -130,8 +134,60 @@ Optional group routing:
 - `AGENT_DISPLAY_NAME` - name that marks a group message as addressed to the agent, default `sb-agent`.
 - `VALID_USER_REQUIRED` - silently acknowledges null or unauthorized identities, including the invoking participant in groups, default `false`.
 
+Optional Sendblue contact upsert (see `docs/features/contact-upsert.md`):
+
+- `SENDBLUE_CONTACTS_ENABLED` - enable `POST /api/v2/contacts` upsert on inbound for numbers with a resolved name, default `false`. Group inbound only fires the upsert hook on **invoked & authorized** groups.
+- `SENDBLUE_CONTACTS_DEFAULT_TAGS` - comma-separated tags applied to every contact upsert, default empty. Tags merge with resolver-supplied `tags` and dedupe **case-insensitively**.
+- `SENDBLUE_CONTACTS_DEDUPE_TTL_SECONDS` - dedupe window per (line, number) so the agent does not re-upsert on every inbound, default `2592000` (30 days). Must be `>= 1`; the loader rejects `0` so `claimContactUpsert` can never produce a `Redis EX 0` error or a 0-second in-memory expiry.
+
+Optional Agent-plan limit tracking (see `docs/features/plan-limits.md`):
+
+- `OUTBOUND_RATE_LIMIT_PER_SECOND` - per-line outbound rate (Sendblue Agent plan), default `1`. Set to `0` to disable pacing.
+- `OUTBOUND_RATE_LIMIT_PER_HOUR` - hourly budget per line (warn at 80%, error at limit), default `2000`.
+- `OUTBOUND_RATE_LIMIT_PER_DAY` - daily budget per line, default `4000`.
+- `INBOUND_CONTACTS_PER_DAY_WARN_THRESHOLD` / `INBOUND_CONTACTS_PER_DAY_LIMIT` - distinct-inbound thresholds, defaults `800` / `1000`.
+- `FOLLOW_UP_DAILY_WARN_THRESHOLD` / `FOLLOW_UP_DAILY_LIMIT` - out-of-window outbound thresholds (track-only, sends not gated), defaults `160` / `200`.
+- `REPLY_WINDOW_HOURS` - window after each inbound during which outbound is unlimited, default `24`.
+- `TRANSIENT_RETRY_MAX_ATTEMPTS` / `TRANSIENT_RETRY_BASE_MS` / `TRANSIENT_RETRY_MAX_MS` - bounded retry on `5509`/`5003`/`4001`/429/5xx and `httpStatus: 0` network failures, defaults `3` / `1000` / `60000`. The loader enforces `BASE_MS <= MAX_MS`.
+- `SMS_LIMIT_RETRY_INTERVAL_MS` / `SMS_LIMIT_MAX_ATTEMPTS` - per-line stall on `SMS_LIMIT_REACHED`, defaults `3600000` (1h) / `24`. Both must be `>= 1`. The cap is now actually enforced (Round 2): the agent reads the persisted `attempts` counter, increments on each failed retry, and falls through to `abortQueue` once the cap is exceeded.
+- `ADMIN_API_TOKEN` - bearer token for `GET /metrics` and every `/admin/*`
+  introspection route (`/admin/limits`, `/admin/conversations/:key`,
+  `/admin/status/:messageHandle`, `/admin/queue`, `/admin/dedupe`). Unset =
+  **none of these routes mount** (prevents accidental exposure of metrics or
+  conversation state). Token is compared via `crypto.timingSafeEqual`; either
+  `Authorization: Bearer <token>` or `x-admin-api-token: <token>` is accepted.
+
+Optional operational visibility (see `docs/features/operational-visibility.md`):
+
+- `METRICS_LABEL_CARDINALITY_LIMIT` - hard cap on label combinations stored
+  per metric before excess series fold into a `__overflow__` sentinel.
+  Default `1000`. The collector emits one warn log per process when the
+  cap is first hit. Cardinality is normally bounded by design — this is
+  a guardrail.
+- `READY_REDIS_TIMEOUT_MS` - timeout (ms) on the Redis ping issued by
+  `GET /ready`. Default `500`. When `REDIS_URL` is unset, `/ready`
+  short-circuits with `{ kind: "in_memory" }`.
+
+Tracing is automatic and requires no environment variables. The
+`traceMiddleware` accepts an inbound `x-trace-id` header (when supplied by an
+upstream proxy or load balancer) or generates a UUID; the value is echoed
+back on the response and threaded into every pino log line emitted while
+processing the request. `LOG_LEVEL` (existing) controls the base pino
+threshold; child loggers inherit it.
+
 Boolean values are enabled by `1`, `true`, `yes`, or `on` case-insensitively.
 Other values are treated as false when the variable is present.
+
+### Cross-field validation
+
+`loadConfig` runs sanity checks at the end and throws if any of the following
+relationships are violated, so misconfig fails fast at boot rather than
+silently swallowing warn-log emissions:
+
+- `INBOUND_CONTACTS_PER_DAY_WARN_THRESHOLD <= INBOUND_CONTACTS_PER_DAY_LIMIT`
+- `FOLLOW_UP_DAILY_WARN_THRESHOLD <= FOLLOW_UP_DAILY_LIMIT`
+- `OUTBOUND_RATE_LIMIT_PER_HOUR <= OUTBOUND_RATE_LIMIT_PER_DAY`
+- `TRANSIENT_RETRY_BASE_MS <= TRANSIENT_RETRY_MAX_MS`
 
 ## Known limitations
 

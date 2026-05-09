@@ -1,6 +1,8 @@
 import type { AgentConfig } from '../config/env.js';
 import type {
   SendblueActionResult,
+  SendblueContactRequest,
+  SendblueContactResult,
   SendblueMarkReadRequest,
   SendblueOutboundGroupMessage,
   SendblueOutboundMessage,
@@ -13,12 +15,14 @@ import type {
 /**
  * Outbound surface for the Sendblue HTTP API.
  *
- * Implementations cover only the endpoints the conversation agent
- * orchestrates today (send, group send, reactions, mark-read, typing).
- * Endpoints documented by Sendblue but not used by this package
- * (`/api/evaluate-service`, `/api/modify-group`, `/api/send-carousel`,
- * `/api/v2/messages`, `/api/account/webhooks`, contacts) are intentionally
- * out of scope — see {@link HttpSendblueClient} for rationale.
+ * Implementations cover the endpoints the conversation agent
+ * orchestrates today (send, group send, reactions, mark-read, typing) plus
+ * the account-level Contacts API (create) used by the optional
+ * `SENDBLUE_CONTACTS_ENABLED` upsert hook. Other endpoints documented by
+ * Sendblue but not used by this package (`/api/evaluate-service`,
+ * `/api/modify-group`, `/api/send-carousel`, `/api/v2/messages`,
+ * `/api/account/webhooks`, contact list/get/update/delete/bulk) are
+ * intentionally out of scope.
  */
 export type SendblueClient = {
   sendMessage(message: SendblueOutboundMessage): Promise<SendblueSendResult>;
@@ -26,6 +30,7 @@ export type SendblueClient = {
   sendReaction(reaction: SendblueReactionRequest): Promise<SendblueActionResult>;
   markRead(receipt: SendblueMarkReadRequest): Promise<SendblueActionResult>;
   sendTypingIndicator(indicator: SendblueTypingIndicator): Promise<SendblueTypingIndicatorResult>;
+  createContact(contact: SendblueContactRequest): Promise<SendblueContactResult>;
 };
 
 /**
@@ -244,6 +249,41 @@ export class HttpSendblueClient implements SendblueClient {
     };
   }
 
+  /**
+   * Create or upsert a contact via `POST /api/v2/contacts`.
+   *
+   * Endpoint: `POST {sendblueApiV2BaseUrl}/api/v2/contacts`
+   * Docs: https://docs.sendblue.com/api-v2/contacts/
+   *
+   * Sendblue's documented body uses snake_case keys; only `number` is
+   * required. Sendblue documents `update_if_exists: true` as the upsert
+   * flag — with it set, a duplicate `number` is updated instead of
+   * erroring. Without it the duplicate-POST behavior is undocumented;
+   * `src/sendblue/contacts.ts` always passes the flag.
+   *
+   * @throws {SendblueApiError} on any non-2xx response.
+   */
+  async createContact(contact: SendblueContactRequest): Promise<SendblueContactResult> {
+    if (!contact.number || contact.number.trim() === '') {
+      throw new Error('Sendblue create-contact requires number');
+    }
+
+    const raw = await this.postJson(this.config.sendblueApiV2BaseUrl, '/api/v2/contacts', 'create-contact', {
+      number: contact.number,
+      ...optionalField('first_name', contact.firstName),
+      ...optionalField('last_name', contact.lastName),
+      ...optionalField('sendblue_number', contact.sendblueNumber),
+      ...optionalField('tags', contact.tags),
+      ...optionalField('custom_variables', contact.customVariables),
+      ...optionalField('update_if_exists', contact.updateIfExists)
+    });
+
+    return {
+      number: readString(raw, 'number') ?? readContactNumber(raw),
+      raw
+    };
+  }
+
   private async postJson(
     baseUrl: string,
     path: string,
@@ -313,5 +353,28 @@ function isRecord(raw: unknown): raw is Record<string, unknown> {
 }
 
 function optionalField(key: string, value: unknown): Record<string, unknown> {
-  return value === undefined || value === null || value === '' ? {} : { [key]: value };
+  if (value === undefined || value === null || value === '') return {};
+  if (Array.isArray(value) && value.length === 0) return {};
+  if (
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length === 0
+  ) {
+    return {};
+  }
+  return { [key]: value };
+}
+
+/**
+ * Sendblue's create-contact response wraps the contact body in a nested
+ * `contact` field, and the phone number inside that nested record is
+ * keyed `phone` (not `number`). The flat `{ number, ... }` shape is
+ * accepted as a forward-compat fallback in case Sendblue changes the
+ * envelope. Verified against a live probe on 2026-05-09.
+ */
+function readContactNumber(raw: unknown): string | undefined {
+  if (!isRecord(raw)) return undefined;
+  const nested = raw.contact;
+  if (!isRecord(nested)) return undefined;
+  return readString(nested, 'phone') ?? readString(nested, 'number');
 }

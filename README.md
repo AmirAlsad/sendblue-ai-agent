@@ -54,6 +54,18 @@ When `REDIS_URL` is configured, state and buffer timers use Redis/BullMQ. Withou
 Redis, the package uses in-memory state for local development and tests. Redis is
 the production path for durable buffering, dedupe, and queue state.
 
+## Operational visibility
+
+The agent ships with a dependency-free observability layer:
+
+- `GET /health` — liveness probe (uptime, version, node version).
+- `GET /ready` — readiness probe with Redis ping and buffer-scheduler stats; returns 503 when a dependency is unhealthy.
+- `GET /metrics` — Prometheus text exposition (counters, gauges, histograms for webhooks, chat dispatch, outbound sends, status callbacks, retries, SMS-limit stalls, rate-limit pacing).
+- `GET /admin/limits`, `/admin/conversations/:key`, `/admin/status/:messageHandle`, `/admin/queue`, `/admin/dedupe?messageHandle=...` — operator introspection. PII redacted by default; pass `?reveal=true` to unmask.
+- A request-scoped `traceId` (also surfaced via the `x-trace-id` response header) is stamped on every pino log line. The traceId persists on the conversation record and outbound handle mapping, so a status callback that arrives later carries a `conversationTraceId` chained to the original webhook.
+
+`/metrics` and every `/admin/*` route mount only when `ADMIN_API_TOKEN` is set; the route table is empty when the token is unset, preventing accidental exposure. See [docs/features/operational-visibility.md](docs/features/operational-visibility.md).
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
@@ -68,6 +80,10 @@ the production path for durable buffering, dedupe, and queue state.
 - [Identity resolver](docs/features/identity-resolver.md)
 - [Conversation state and chat contract](docs/features/conversation-state.md)
 - [Rich chat actions](docs/features/rich-chat-actions.md)
+- [Sendblue contact upsert](docs/features/contact-upsert.md)
+- [Agent-plan limit tracking](docs/features/plan-limits.md)
+- [Operational visibility (metrics, tracing, health, introspection)](docs/features/operational-visibility.md)
+- [Persistence](docs/features/persistence.md)
 - [Testing infrastructure](docs/TESTING.md)
 - [Observed Sendblue payload structures](docs/SENDBLUE-PAYLOAD-STRUCTURES.md)
 
@@ -158,6 +174,52 @@ Optional for rich Sendblue actions:
 - `AGENT_DISPLAY_NAME` (defaults to `sb-agent`)
 - `VALID_USER_REQUIRED` (defaults to `false`)
 
+Optional for Sendblue contact upsert (see [docs/features/contact-upsert.md](docs/features/contact-upsert.md)):
+
+- `SENDBLUE_CONTACTS_ENABLED` (defaults to `false`; opt in once your
+  `USER_LOOKUP_URL` returns name fields. Group inbound only fires the
+  upsert hook on **invoked & authorized** groups.)
+- `SENDBLUE_CONTACTS_DEFAULT_TAGS` (comma-separated, defaults empty;
+  merge with resolver tags is **case-insensitive** so `'Agent'` +
+  `'agent'` collapse to one entry)
+- `SENDBLUE_CONTACTS_DEDUPE_TTL_SECONDS` (defaults to `2592000` — 30
+  days; must be `>= 1`, the loader rejects `0`)
+
+Optional for Agent-plan limit tracking and retries (see
+[docs/features/plan-limits.md](docs/features/plan-limits.md)):
+
+- `OUTBOUND_RATE_LIMIT_PER_SECOND` (defaults to `1`; `0` disables pacing)
+- `OUTBOUND_RATE_LIMIT_PER_HOUR` (defaults to `2000`)
+- `OUTBOUND_RATE_LIMIT_PER_DAY` (defaults to `4000`)
+- `INBOUND_CONTACTS_PER_DAY_WARN_THRESHOLD` / `INBOUND_CONTACTS_PER_DAY_LIMIT` (defaults `800` / `1000`)
+- `FOLLOW_UP_DAILY_WARN_THRESHOLD` / `FOLLOW_UP_DAILY_LIMIT` (defaults `160` / `200`; track-only)
+- `REPLY_WINDOW_HOURS` (defaults to `24`)
+- `TRANSIENT_RETRY_MAX_ATTEMPTS` / `TRANSIENT_RETRY_BASE_MS` /
+  `TRANSIENT_RETRY_MAX_MS` (defaults `3` / `1000` / `60000`; covers
+  `5509`/`5003`/`4001`/429/5xx and `httpStatus: 0` network failures.
+  `BASE_MS <= MAX_MS` enforced at boot.)
+- `SMS_LIMIT_RETRY_INTERVAL_MS` (defaults to `3600000` — 1h, must be
+  `>= 1`) / `SMS_LIMIT_MAX_ATTEMPTS` (defaults to `24`, must be `>= 1`;
+  the cap is now actually enforced — the agent tracks attempts and
+  aborts after exhaustion. Stalls are persisted with `conversationKey`
+  so a fresh process can resume scheduled retries on boot via
+  `recoverPendingRetries`.)
+- `ADMIN_API_TOKEN` (unset = `GET /metrics` and every `/admin/*`
+  introspection route — including `/admin/limits` — is **not mounted**;
+  set to enable the read-only counter snapshot, Prometheus scrape, and
+  redacted-by-default introspection endpoints. Token compared via
+  `crypto.timingSafeEqual`; either `Authorization: Bearer <token>` or
+  `x-admin-api-token: <token>` is accepted.)
+
+Optional for operational visibility (see
+[docs/features/operational-visibility.md](docs/features/operational-visibility.md)):
+
+- `METRICS_LABEL_CARDINALITY_LIMIT` (defaults to `1000`; per-metric guardrail
+  before excess label combinations fold into a `__overflow__` sentinel series)
+- `READY_REDIS_TIMEOUT_MS` (defaults to `500`; timeout on the Redis ping
+  issued by `GET /ready`. When `REDIS_URL` is unset, `/ready` short-circuits
+  with `{ kind: "in_memory" }`.)
+
 Required only for E2E:
 
 - `E2E_AGENT_PORT`
@@ -237,6 +299,14 @@ after support enables it, or for catching `from_number` typos that survive
 `requireEnv` but fail Sendblue's E.164 check. Sends no outbound message and
 mutates no webhook config; a successful call does deliver a UI-visible read
 receipt to the recipient's device.
+
+`probe:contacts` is the create-contact equivalent: it calls
+`POST /api/v2/contacts` (upsert) with `E2E_TEST_DEVICE_NUMBER` and a
+clearly-tagged `Probe Test` payload, then attempts a follow-up
+`DELETE /api/v2/contacts/{phone}` to clean up. Useful for confirming the
+exact body shape Sendblue accepts (the live response keys the nested
+contact's phone as `phone`, not `number`) and for sanity-checking the
+Contacts API on a new account before flipping `SENDBLUE_CONTACTS_ENABLED=true`.
 
 `showcase:e2e` starts a live scenario-aware chat endpoint, the agent, ngrok,
 and managed Sendblue webhooks, then sends guided prompts to

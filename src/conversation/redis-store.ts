@@ -15,6 +15,10 @@ function outboundMappingKey(messageHandle: string): string {
   return `sendblue-ai-agent:outbound:${messageHandle}`;
 }
 
+function contactUpsertKey(lineNumber: string, phoneNumber: string): string {
+  return `sendblue-ai-agent:contact-upserted:${lineNumber}:${phoneNumber}`;
+}
+
 export class RedisConversationStore implements ConversationStore {
   private readonly redis: Redis;
 
@@ -51,6 +55,17 @@ export class RedisConversationStore implements ConversationStore {
     return result === 'OK';
   }
 
+  async peekInboundHandle(messageHandle: string): Promise<{ present: boolean; ttlSeconds?: number }> {
+    const key = inboundDedupeKey(messageHandle);
+    // ioredis returns -2 when the key does not exist, -1 when present without
+    // TTL. Issue TTL alone (skip EXISTS) so the EXISTS→TTL TOCTOU window
+    // cannot report `{ present: true, ttl: undefined }` for a key that
+    // expired between the two commands.
+    const ttl = await this.redis.ttl(key);
+    if (ttl === -2) return { present: false };
+    return { present: true, ttlSeconds: ttl >= 0 ? ttl : undefined };
+  }
+
   async mapOutboundHandle(messageHandle: string, mapping: OutboundHandleMapping): Promise<void> {
     await this.redis.set(
       outboundMappingKey(messageHandle),
@@ -67,6 +82,34 @@ export class RedisConversationStore implements ConversationStore {
 
   async deleteOutboundHandleMapping(messageHandle: string): Promise<void> {
     await this.redis.del(outboundMappingKey(messageHandle));
+  }
+
+  async claimContactUpsert(lineNumber: string, phoneNumber: string, ttlSeconds: number): Promise<boolean> {
+    // Defensive guard: Redis rejects `EX 0` with "ERR invalid expire time".
+    // Treat any non-positive TTL as "claim failed" so the caller skips the
+    // upsert rather than crashing the inbound webhook handler. The config
+    // loader enforces `>= 1` for `SENDBLUE_CONTACTS_DEDUPE_TTL_SECONDS`,
+    // so this is belt-and-suspenders for direct callers.
+    if (ttlSeconds <= 0) return false;
+    const result = await this.redis.set(
+      contactUpsertKey(lineNumber, phoneNumber),
+      '1',
+      'EX',
+      ttlSeconds,
+      'NX'
+    );
+    return result === 'OK';
+  }
+
+  async *listConversationKeys(): AsyncIterable<string> {
+    const matchPattern = 'sendblue-ai-agent:conversation:*';
+    const prefixLen = 'sendblue-ai-agent:conversation:'.length;
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.redis.scan(cursor, 'MATCH', matchPattern, 'COUNT', 200);
+      cursor = next;
+      for (const key of keys) yield key.slice(prefixLen);
+    } while (cursor !== '0');
   }
 
   async close(): Promise<void> {

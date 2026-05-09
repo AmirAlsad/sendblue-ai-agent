@@ -100,7 +100,26 @@ depending on the channel:
   delivery confirmations.
 - SMS and downgraded (`was_downgraded === true`) conversations advance on
   `SENT`. Sendblue does not emit `DELIVERED` for SMS recipients.
-- `ERROR` and `DECLINED` abort the queue (v0.2 behavior).
+- `ERROR` and `DECLINED` no longer always abort the queue. The agent now
+  classifies `errorCode` via `classifyErrorCode` and:
+  - `rate_limit` / `server` / `status_unresolved` (`5509`, `5003`, `4001`,
+    `5000`, `10002`, plus bare 429 / 5xx and `SendblueApiError` with
+    `httpStatus: 0` for inline network failures) → bounded retry of the
+    same queued action with exponential backoff (1s / 4s / 16s, capped at
+    `TRANSIENT_RETRY_MAX_MS`). After `TRANSIENT_RETRY_MAX_ATTEMPTS`
+    attempts, the queue aborts.
+  - `sms_limit` (`SMS_LIMIT_REACHED`) → per-line stall persisted via
+    `setSmsLimitStall`; the `SmsLimitStallScheduler` retries every
+    `SMS_LIMIT_RETRY_INTERVAL_MS` up to `SMS_LIMIT_MAX_ATTEMPTS`.
+    `clearSmsLimitStall` runs on the next `advanceQueue` so the next
+    5509 starts a fresh attempt counter.
+  - `validation` / `blacklist` / `unknown` → existing `abortQueue`
+    behavior.
+  Each retry/stall captures `{ itemId, retryCount }` at scheduling time
+  so the timer-driven `runRetry` can drop a stale attempt at debug
+  rather than re-sending whatever item the queue has now (catches
+  delivery-timeout-then-retry and interrupt-then-retry races). See
+  `docs/features/plan-limits.md` for the full retry/stall policy.
 
 This rule is implemented in `ConversationAgent.handleStatus` and
 `ConversationAgent.successStatus`. The status tracker does not encode
@@ -152,6 +171,10 @@ receipts and there must not be — Sendblue does not send a `READ` callback.
   channel-appropriate callback never arrives.
 - `READ_RECEIPTS_ENABLED` — gates the separate read-receipt API call;
   unrelated to status callbacks.
+- `TRANSIENT_RETRY_MAX_ATTEMPTS`, `TRANSIENT_RETRY_BASE_MS`,
+  `TRANSIENT_RETRY_MAX_MS`, `SMS_LIMIT_RETRY_INTERVAL_MS`,
+  `SMS_LIMIT_MAX_ATTEMPTS` — control the retry/stall behavior on
+  transient ERROR callbacks. See `docs/features/plan-limits.md`.
 
 ## Known limitations
 
